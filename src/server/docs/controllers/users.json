@@ -1,0 +1,70 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Your API Documentation",
+    "description": "API documentation for your Node.js application",
+    "version": "1.0.0"
+  },
+  "host": "localhost:3000",
+  "basePath": "/api/users/",
+  "schemes": [
+    "http"
+  ],
+  "paths": {
+    "/api/users/": {
+      "get": {
+        "description": "",
+        "tags": [
+          "users"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/users/{id}": {
+      "get": {
+        "description": "",
+        "tags": [
+          "users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/users/{id}/accountId": {
+      "get": {
+        "description": "",
+        "tags": [
+          "users"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  }
+}
