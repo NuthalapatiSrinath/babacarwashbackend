@@ -1,22 +1,27 @@
-'use strict';
+"use strict";
 
-const utils = require('./src/server/utils')
-const database = require('./src/server/database')
-const server = require('./src/server')
+const utils = require("./src/server/utils");
+const database = require("./src/server/database");
+const createServer = require("./src/server");
 
 const initialize = async () => {
+  try {
+    const utilsData = utils.initialize();
 
-    try {
+    await database.initialize(utilsData);
 
-        const utilsData = utils.initialize()
+    const app = createServer(utilsData);
 
-        await database.initialize(utilsData)
-        await server.initialize(utilsData)
+    app.listen(utilsData.config.port, () => {
+      console.log(
+        `BCW Backend | server is up and running in ${utilsData.config.env.toUpperCase()} environment on port ${
+          utilsData.config.port
+        }`
+      );
+    });
+  } catch (error) {
+    console.error("ALERT!", error);
+  }
+};
 
-        console.log(`BCW Backend | server is up and running in ${utilsData.config.env.toUpperCase()} environment on port ${utilsData.config.port}`);
-
-    } catch (error) {
-        console.error('ALERT!', error)
-    }
-
-}; initialize()
+initialize();
