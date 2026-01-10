@@ -22,13 +22,14 @@ router.post(
 // 2. PARAMETERIZED ROUTES (ID based)
 // ---------------------------------------------------------
 
-router.get("/", AuthHelper.authenticate, controller.list);
-router.post("/", AuthHelper.authenticate, controller.create);
+const permissionsMiddleware = require('../../middleware/permissions.middleware');
+router.get("/", AuthHelper.authenticate, permissionsMiddleware('customers', 'view'), controller.list);
+router.post("/", AuthHelper.authenticate, permissionsMiddleware('customers', 'create'), controller.create);
 
 // Standard Customer Actions
 router.get("/:id", AuthHelper.authenticate, controller.info);
-router.put("/:id", AuthHelper.authenticate, controller.update);
-router.delete("/:id", AuthHelper.authenticate, controller.delete);
+router.put("/:id", AuthHelper.authenticate, permissionsMiddleware('customers', 'edit'), controller.update);
+router.delete("/:id", AuthHelper.authenticate, permissionsMiddleware('customers', 'delete'), controller.delete);
 router.put("/:id/undo", AuthHelper.authenticate, controller.undoDelete); // Changed to PUT as it modifies the record
 
 // Status Management

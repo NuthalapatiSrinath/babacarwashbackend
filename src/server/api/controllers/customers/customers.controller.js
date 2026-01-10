@@ -148,9 +148,19 @@ controller.list = async (req, res) => {
     const { user, query } = req;
     const data = await service.list(user, query);
     console.log("✅ [CUSTOMERS CONTROLLER] List success, total:", data.total);
+    // Field filtering based on permissions
+    let allowedFields = user?.permissions?.customers?.fields;
+    let filteredData = data.data;
+    if (Array.isArray(allowedFields) && allowedFields.length > 0 && user.role !== 'admin') {
+      filteredData = data.data.map(item => {
+        let filtered = {};
+        allowedFields.forEach(f => { if (item[f] !== undefined) filtered[f] = item[f]; });
+        return filtered;
+      });
+    }
     return res
       .status(200)
-      .json({ statusCode: 200, message: "success", ...data });
+      .json({ statusCode: 200, message: "success", total: data.total, data: filteredData });
   } catch (error) {
     console.error("❌ [CUSTOMERS CONTROLLER] List error:", error);
     return res.status(500).json({ message: "Internal server error", error });
@@ -200,7 +210,14 @@ controller.update = async (req, res) => {
 controller.delete = async (req, res) => {
   try {
     const { user, params, body } = req;
-    const data = await service.delete(user, params.id);
+    // Require reason for non-admins
+    let reason = body?.reason;
+    if (user.role !== 'admin') {
+      if (!reason || typeof reason !== 'string' || !reason.trim()) {
+        return res.status(400).json({ message: 'Reason is required for delete.' });
+      }
+    }
+    const data = await service.delete(user, params.id, reason);
     return res.status(200).json({ statusCode: 200, message: "success", data });
   } catch (error) {
     console.error(error);

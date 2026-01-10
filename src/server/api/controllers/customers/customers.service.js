@@ -165,10 +165,17 @@ service.update = async (userInfo, id, payload) => {
   await JobsService.createJob(customerData);
 };
 
-service.delete = async (userInfo, id, payload) => {
+service.delete = async (userInfo, id, reason) => {
+  // Log delete action for admin review (could be a DB collection or notification system)
+  // Here, we just add the reason to the customer record for admin review
   return await CustomersModel.updateOne(
     { _id: id },
-    { isDeleted: true, deletedBy: userInfo._id }
+    {
+      isDeleted: true,
+      deletedBy: userInfo._id,
+      deletedAt: new Date(),
+      deleteReason: reason || null,
+    }
   );
 };
 
