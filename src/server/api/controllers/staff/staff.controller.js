@@ -1,5 +1,6 @@
 const csv = require("fast-csv");
 const service = require("./staff.service");
+const fs = require("fs"); // ✅ Ensure fs is imported at top level
 const controller = module.exports;
 
 controller.list = async (req, res) => {
@@ -48,9 +49,8 @@ controller.update = async (req, res) => {
     const data = await service.update(user, params.id, body);
     return res.status(200).json({ statusCode: 200, message: "success", data });
   } catch (error) {
-    if (typeof error == "string") {
+    if (typeof error == "string")
       return res.status(400).json({ message: error });
-    }
     console.error(error);
     return res.status(500).json({ message: "Internal server error", error });
   }
@@ -59,12 +59,11 @@ controller.update = async (req, res) => {
 controller.delete = async (req, res) => {
   try {
     const { user, params, body } = req;
-    const data = await service.delete(user, params.id);
+    const data = await service.delete(user, params.id, body.reason); // ✅ Pass reason
     return res.status(200).json({ statusCode: 200, message: "success", data });
   } catch (error) {
-    if (typeof error == "string") {
+    if (typeof error == "string")
       return res.status(400).json({ message: error });
-    }
     console.error(error);
     return res.status(500).json({ message: "Internal server error", error });
   }
@@ -86,15 +85,15 @@ controller.uploadDocument = async (req, res) => {
     const { user, params, body } = req;
     const { documentType } = body;
 
+    // ✅ Fix: Use req.file (singular) provided by your helper
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    // Get the uploaded file from formidable
     const uploadedFile = req.file;
     const fileData = {
       filename: uploadedFile.originalFilename || uploadedFile.name,
-      path: uploadedFile.filepath || uploadedFile.path, // Real file path on disk
+      path: uploadedFile.filepath || uploadedFile.path,
       mimetype: uploadedFile.mimetype,
       size: uploadedFile.size,
     };
@@ -119,12 +118,10 @@ controller.deleteDocument = async (req, res) => {
     const { user, params, body } = req;
     const { id } = params;
     const { documentType } = body;
-
     await service.deleteDocument(user, id, documentType);
-    return res.status(200).json({
-      statusCode: 200,
-      message: "Document deleted successfully",
-    });
+    return res
+      .status(200)
+      .json({ statusCode: 200, message: "Document deleted successfully" });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Internal server error", error });
@@ -146,7 +143,6 @@ controller.getDocument = async (req, res) => {
     const { params, query } = req;
     const { id, documentType } = params;
 
-    // Allow token in query params for iframe viewing
     let user = req.user;
     if (!user && query.token) {
       try {
@@ -154,44 +150,29 @@ controller.getDocument = async (req, res) => {
         const secretKey = process.env.SECRET_KEY || process.env.JWT_SECRET;
         const decoded = jwt.verify(query.token, secretKey);
         user = decoded;
-        console.log("✅ Token validated for document access:", {
-          userId: user.id || user._id,
-          documentType,
-        });
       } catch (e) {
-        console.error("❌ Token validation failed:", e.message);
         return res
           .status(401)
           .json({ message: "Invalid token", error: e.message });
       }
     }
 
-    if (!user) {
-      console.error("❌ No user found - neither req.user nor query.token");
-      return res.status(401).json({ message: "Not authorized" });
-    }
+    if (!user) return res.status(401).json({ message: "Not authorized" });
 
     const staff = await service.info({}, id);
-    if (!staff) {
-      return res.status(404).json({ message: "Staff not found" });
-    }
+    if (!staff) return res.status(404).json({ message: "Staff not found" });
 
-    let document;
-    if (documentType === "Passport") {
-      document = staff.passportDocument;
-    } else if (documentType === "Visa") {
-      document = staff.visaDocument;
-    } else if (documentType === "Emirates ID") {
-      document = staff.emiratesIdDocument;
-    }
+    const fieldMap = {
+      Passport: "passportDocument",
+      Visa: "visaDocument",
+      "Emirates ID": "emiratesIdDocument",
+    };
+    const document = staff[fieldMap[documentType]];
 
-    if (!document || !document.url) {
+    if (!document || !document.url)
       return res.status(404).json({ message: "Document not found" });
-    }
 
-    console.log("📄 Redirecting to public Cloudinary URL:", document.url);
-
-    // Redirect to public Cloudinary URL
+    // ✅ Redirect to Oracle URL
     return res.redirect(document.url);
   } catch (error) {
     console.error("❌ Document access error:", error);
@@ -205,7 +186,6 @@ controller.exportData = async (req, res) => {
   try {
     const { user, query } = req;
     const buffer = await service.exportData(user, query);
-
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -224,7 +204,6 @@ controller.exportData = async (req, res) => {
 controller.generateTemplate = async (req, res) => {
   try {
     const buffer = await service.generateTemplate();
-
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -244,32 +223,30 @@ controller.importData = async (req, res) => {
   try {
     const { user } = req;
 
-    if (!req.files || req.files.length === 0) {
+    // ✅ Fix: Use req.file (singular) provided by your helper
+    if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const uploadedFile = req.files[0];
+    const uploadedFile = req.file;
 
-    // Read file from disk (formidable saves it to temp path)
-    const fs = require("fs");
+    // Read file from disk
     const fileBuffer = fs.readFileSync(
-      uploadedFile.file.filepath || uploadedFile.file.path
+      uploadedFile.filepath || uploadedFile.path
     );
 
     const results = await service.importDataFromExcel(user, fileBuffer);
 
-    // Clean up temp file
+    // Clean up
     try {
-      fs.unlinkSync(uploadedFile.file.filepath || uploadedFile.file.path);
+      fs.unlinkSync(uploadedFile.filepath || uploadedFile.path);
     } catch (e) {
       console.log("Could not delete temp file:", e.message);
     }
 
-    return res.status(200).json({
-      statusCode: 200,
-      message: "Import completed",
-      results,
-    });
+    return res
+      .status(200)
+      .json({ statusCode: 200, message: "Import completed", results });
   } catch (error) {
     console.error("Import error:", error);
     return res.status(500).json({
