@@ -1,7 +1,7 @@
 const StaffModel = require("../../models/staff.model");
+const SiteModel = require("../../models/sites.model"); // ✅ Import Site Model
 const CounterService = require("../../../utils/counters");
 const CommonHelper = require("../../../helpers/common.helper");
-// ✅ CHANGE 1: Import Oracle instead of Cloudinary
 const oracleService = require("../../../cloud/oracle");
 const fs = require("fs");
 const path = require("path");
@@ -9,6 +9,7 @@ const axios = require("axios");
 
 const service = module.exports;
 
+// --- LIST (Fixed 500 Error) ---
 service.list = async (userInfo, query) => {
   const paginationData = CommonHelper.paginationData(query);
   const findQuery = {
@@ -31,9 +32,11 @@ service.list = async (userInfo, query) => {
     .sort({ visaExpiry: 1, _id: -1 })
     .skip(paginationData.skip)
     .limit(paginationData.limit)
-    .populate("site")
+    // .populate("site") // ❌ REMOVED to fix CastError (Downtown Dubai is not an ID)
     .lean();
 
+  // Manual population if needed, or send as is
+  // (Frontend handles strings gracefully)
   return { total, data };
 };
 
@@ -42,13 +45,17 @@ service.info = async (userInfo, id) => {
 };
 
 service.create = async (userInfo, payload) => {
-  const userExists = await StaffModel.countDocuments({
-    isDeleted: false,
-    employeeCode: payload.employeeCode,
-  });
-  if (userExists) {
-    throw "USER-EXISTS";
+  const query = { isDeleted: false, $or: [] };
+  if (payload.employeeCode)
+    query.$or.push({ employeeCode: payload.employeeCode });
+  if (payload.passportNumber)
+    query.$or.push({ passportNumber: payload.passportNumber });
+
+  if (query.$or.length > 0) {
+    const exists = await StaffModel.findOne(query);
+    if (exists) throw "USER-EXISTS";
   }
+
   const id = await CounterService.id("staff");
   const data = {
     createdBy: userInfo._id,
@@ -60,22 +67,22 @@ service.create = async (userInfo, payload) => {
 };
 
 service.update = async (userInfo, id, payload) => {
-  const isExists = await StaffModel.countDocuments({
-    _id: { $ne: id },
-    isDeleted: false,
-    employeeCode: payload.employeeCode,
-  });
-  if (isExists) {
-    throw "Oops! Employee already exists";
+  if (payload.employeeCode) {
+    const isExists = await StaffModel.countDocuments({
+      _id: { $ne: id },
+      isDeleted: false,
+      employeeCode: payload.employeeCode,
+    });
+    if (isExists) throw "Oops! Employee already exists";
   }
   const data = { updatedBy: userInfo._id, ...payload };
   await StaffModel.updateOne({ _id: id }, { $set: data });
 };
 
-service.delete = async (userInfo, id, payload) => {
+service.delete = async (userInfo, id, reason) => {
   return await StaffModel.updateOne(
     { _id: id },
-    { isDeleted: true, deletedBy: userInfo._id }
+    { isDeleted: true, deletedBy: userInfo._id, deleteReason: reason }
   );
 };
 
@@ -87,41 +94,29 @@ service.undoDelete = async (userInfo, id) => {
 };
 
 service.uploadDocument = async (userInfo, id, documentType, fileData) => {
-  // ✅ CHANGE 2: Removed "require(cloudinary)" inside function
-
   const fieldMap = {
     Passport: "passportDocument",
     Visa: "visaDocument",
     "Emirates ID": "emiratesIdDocument",
   };
-
   const fieldName = fieldMap[documentType];
   if (!fieldName) throw new Error("Invalid document type");
 
   const staff = await StaffModel.findById(id);
   if (!staff) throw new Error("Staff not found");
 
-  // ✅ CHANGE 3: Use Oracle to delete old file
   if (staff[fieldName]?.filename) {
     await oracleService.deleteFile(staff[fieldName].filename);
   }
 
   const filePath = fileData.path;
-  if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error("File not found on disk");
-  }
-
-  // Generate Oracle Filename
   const ext = path.extname(fileData.filename) || ".pdf";
   const oracleFileName = `staff-${id}-${documentType.replace(
     /\s+/g,
     ""
   )}-${Date.now()}${ext}`;
-
-  // ✅ CHANGE 4: Upload to Oracle
   const publicUrl = await oracleService.uploadFile(filePath, oracleFileName);
 
-  // Clean up local file
   try {
     fs.unlinkSync(filePath);
   } catch (e) {}
@@ -129,53 +124,35 @@ service.uploadDocument = async (userInfo, id, documentType, fileData) => {
   const documentData = {
     url: publicUrl,
     publicId: oracleFileName,
-    filename: oracleFileName, // We use this to delete later
+    filename: oracleFileName,
     uploadedAt: new Date(),
   };
 
   await StaffModel.updateOne(
     { _id: id },
-    {
-      $set: {
-        [fieldName]: documentData,
-        updatedBy: userInfo._id,
-      },
-    }
+    { $set: { [fieldName]: documentData, updatedBy: userInfo._id } }
   );
-
   return documentData;
 };
 
 service.deleteDocument = async (userInfo, id, documentType) => {
-  // ✅ CHANGE 5: Removed "require(cloudinary)" inside function
-  try {
-    const staff = await StaffModel.findById(id);
-    if (!staff) throw new Error("Staff not found");
+  const staff = await StaffModel.findById(id);
+  const fieldMap = {
+    Passport: "passportDocument",
+    Visa: "visaDocument",
+    "Emirates ID": "emiratesIdDocument",
+  };
+  const fieldName = fieldMap[documentType];
 
-    const fieldMap = {
-      Passport: "passportDocument",
-      Visa: "visaDocument",
-      "Emirates ID": "emiratesIdDocument",
-    };
-    const fieldName = fieldMap[documentType];
-
-    // ✅ CHANGE 6: Use Oracle to delete
-    if (staff[fieldName]?.filename) {
-      await oracleService.deleteFile(staff[fieldName].filename);
-    }
-
-    // Remove from database
-    return await StaffModel.updateOne(
-      { _id: id },
-      { $unset: { [fieldName]: 1 }, $set: { updatedBy: userInfo._id } }
-    );
-  } catch (error) {
-    console.error("Delete document error:", error);
-    throw error;
+  if (staff[fieldName]?.filename) {
+    await oracleService.deleteFile(staff[fieldName].filename);
   }
+  return await StaffModel.updateOne(
+    { _id: id },
+    { $unset: { [fieldName]: 1 }, $set: { updatedBy: userInfo._id } }
+  );
 };
 
-// ... (Keep existing export/import/template functions below) ...
 service.getExpiringDocuments = async () => {
   const twoMonthsFromNow = new Date();
   twoMonthsFromNow.setMonth(twoMonthsFromNow.getMonth() + 2);
@@ -194,9 +171,6 @@ service.getExpiringDocuments = async () => {
     _id: s._id,
     name: s.name,
     employeeCode: s.employeeCode,
-    passportExpiry: s.passportExpiry,
-    visaExpiry: s.visaExpiry,
-    emiratesIdExpiry: s.emiratesIdExpiry,
     expiringDocs: [
       s.passportExpiry &&
       s.passportExpiry >= today &&
@@ -224,6 +198,7 @@ service.generateTemplate = async () => {
     { header: "Employee Code", key: "employeeCode", width: 15 },
     { header: "Name", key: "name", width: 25 },
     { header: "Company", key: "companyName", width: 20 },
+    { header: "Site", key: "site", width: 20 },
     { header: "Joining Date (YYYY-MM-DD)", key: "joiningDate", width: 20 },
     { header: "Passport Number", key: "passportNumber", width: 15 },
     {
@@ -246,72 +221,38 @@ service.generateTemplate = async () => {
       width: 50,
     },
   ];
-
   return await workbook.xlsx.writeBuffer();
 };
 
 service.exportData = async (userInfo, query) => {
   const ExcelJS = require("exceljs");
-  const findQuery = { isDeleted: false };
-  const staffData = await StaffModel.find(findQuery)
-    .sort({ visaExpiry: 1 })
-    .populate("site", "name")
-    .lean();
-
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("Staff");
+  const staffData = await StaffModel.find({ isDeleted: false })
+    .sort({ visaExpiry: 1 })
+    .lean();
 
   worksheet.columns = [
     { header: "Employee Code", key: "employeeCode", width: 15 },
     { header: "Name", key: "name", width: 25 },
     { header: "Company", key: "companyName", width: 20 },
-    { header: "Joining Date (YYYY-MM-DD)", key: "joiningDate", width: 20 },
+    { header: "Site", key: "site", width: 20 },
+    { header: "Joining Date", key: "joiningDate", width: 20 },
     { header: "Passport Number", key: "passportNumber", width: 15 },
-    {
-      header: "Passport Expiry (YYYY-MM-DD)",
-      key: "passportExpiry",
-      width: 20,
-    },
-    { header: "Passport Document URL", key: "passportDocumentUrl", width: 50 },
-    { header: "Visa Expiry (YYYY-MM-DD)", key: "visaExpiry", width: 20 },
-    { header: "Visa Document URL", key: "visaDocumentUrl", width: 50 },
-    { header: "Emirates ID", key: "emiratesId", width: 20 },
-    {
-      header: "Emirates ID Expiry (YYYY-MM-DD)",
-      key: "emiratesIdExpiry",
-      width: 20,
-    },
-    {
-      header: "Emirates ID Document URL",
-      key: "emiratesIdDocumentUrl",
-      width: 50,
-    },
+    { header: "Passport Expiry", key: "passportExpiry", width: 20 },
   ];
-
-  const formatDate = (date) => {
-    if (!date) return "";
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return "";
-    return d.toISOString().split("T")[0];
-  };
 
   staffData.forEach((staff) => {
     worksheet.addRow({
       employeeCode: staff.employeeCode,
       name: staff.name,
       companyName: staff.companyName,
-      joiningDate: formatDate(staff.joiningDate),
+      site: staff.site?.name || staff.site || "",
+      joiningDate: staff.joiningDate,
       passportNumber: staff.passportNumber,
-      passportExpiry: formatDate(staff.passportExpiry),
-      passportDocumentUrl: staff.passportDocument?.url || "",
-      visaExpiry: formatDate(staff.visaExpiry),
-      visaDocumentUrl: staff.visaDocument?.url || "",
-      emiratesId: staff.emiratesId,
-      emiratesIdExpiry: formatDate(staff.emiratesIdExpiry),
-      emiratesIdDocumentUrl: staff.emiratesIdDocument?.url || "",
+      passportExpiry: staff.passportExpiry,
     });
   });
-
   return await workbook.xlsx.writeBuffer();
 };
 
@@ -328,15 +269,16 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
       employeeCode: row.getCell(1).value?.toString() || "",
       name: row.getCell(2).value?.toString() || "",
       companyName: row.getCell(3).value?.toString() || "",
-      joiningDate: row.getCell(4).value,
-      passportNumber: row.getCell(5).value?.toString() || "",
-      passportExpiry: row.getCell(6).value,
-      passportDocumentUrl: row.getCell(7).value?.toString() || "",
-      visaExpiry: row.getCell(8).value,
-      visaDocumentUrl: row.getCell(9).value?.toString() || "",
-      emiratesId: row.getCell(10).value?.toString() || "",
-      emiratesIdExpiry: row.getCell(11).value,
-      emiratesIdDocumentUrl: row.getCell(12).value?.toString() || "",
+      site: row.getCell(4).value?.toString() || "", // Column D
+      joiningDate: row.getCell(5).value,
+      passportNumber: row.getCell(6).value?.toString() || "",
+      passportExpiry: row.getCell(7).value,
+      passportDocumentUrl: row.getCell(8).value?.toString() || "",
+      visaExpiry: row.getCell(9).value,
+      visaDocumentUrl: row.getCell(10).value?.toString() || "",
+      emiratesId: row.getCell(11).value?.toString() || "",
+      emiratesIdExpiry: row.getCell(12).value,
+      emiratesIdDocumentUrl: row.getCell(13).value?.toString() || "",
     };
     excelData.push(rowData);
   });
@@ -349,11 +291,47 @@ service.importDataWithOracle = async (userInfo, csvData) => {
 
   for (const row of csvData) {
     try {
-      let staff = await StaffModel.findOne({ employeeCode: row.employeeCode });
+      let staff = null;
+
+      // Smart Deduplication
+      if (row.employeeCode?.trim()) {
+        staff = await StaffModel.findOne({
+          employeeCode: new RegExp(`^${row.employeeCode.trim()}$`, "i"),
+          isDeleted: false,
+        });
+      }
+      if (!staff && row.passportNumber?.trim()) {
+        staff = await StaffModel.findOne({
+          passportNumber: new RegExp(`^${row.passportNumber.trim()}$`, "i"),
+          isDeleted: false,
+        });
+      }
+      if (!staff && row.name && row.companyName) {
+        staff = await StaffModel.findOne({
+          name: new RegExp(`^${row.name.trim()}$`, "i"),
+          companyName: new RegExp(`^${row.companyName.trim()}$`, "i"),
+          isDeleted: false,
+        });
+      }
+
+      // ✅ SITE LOOKUP (Fixes CastError)
+      let siteId = null;
+      if (row.site) {
+        // Try to find site ID by name
+        const siteDoc = await SiteModel.findOne({
+          name: { $regex: new RegExp(`^${row.site.trim()}$`, "i") },
+        });
+        if (siteDoc) {
+          siteId = siteDoc._id; // Use valid ObjectId
+        } else {
+          siteId = row.site; // Fallback to string (Frontend handles it)
+        }
+      }
 
       const staffData = {
         name: row.name,
         companyName: row.companyName,
+        site: siteId,
         joiningDate: row.joiningDate ? new Date(row.joiningDate) : undefined,
         passportNumber: row.passportNumber,
         passportExpiry: row.passportExpiry
@@ -367,31 +345,11 @@ service.importDataWithOracle = async (userInfo, csvData) => {
         updatedBy: userInfo._id,
       };
 
-      if (
-        row.passportDocumentUrl &&
-        row.passportDocumentUrl.startsWith("http")
-      ) {
+      if (row.passportDocumentUrl?.startsWith("http")) {
         staffData.passportDocument = await service._uploadFromUrl(
           row.passportDocumentUrl,
           staff?._id || "temp",
           "passport"
-        );
-      }
-      if (row.visaDocumentUrl && row.visaDocumentUrl.startsWith("http")) {
-        staffData.visaDocument = await service._uploadFromUrl(
-          row.visaDocumentUrl,
-          staff?._id || "temp",
-          "visa"
-        );
-      }
-      if (
-        row.emiratesIdDocumentUrl &&
-        row.emiratesIdDocumentUrl.startsWith("http")
-      ) {
-        staffData.emiratesIdDocument = await service._uploadFromUrl(
-          row.emiratesIdDocumentUrl,
-          staff?._id || "temp",
-          "emiratesId"
         );
       }
 
@@ -401,10 +359,12 @@ service.importDataWithOracle = async (userInfo, csvData) => {
         const id = await CounterService.id("staff");
         staffData.id = id;
         staffData.createdBy = userInfo._id;
+        if (row.employeeCode) staffData.employeeCode = row.employeeCode;
         await new StaffModel(staffData).save();
       }
       results.success++;
     } catch (error) {
+      console.error("Import row failed:", error);
       results.errors.push({ row, error: error.message });
     }
   }
@@ -417,15 +377,12 @@ service._uploadFromUrl = async (url, staffId, docType) => {
     const buffer = Buffer.from(response.data, "binary");
     const tempDir = path.join(__dirname, "../../../../temp");
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-
     const ext = path.extname(url).split("?")[0] || ".pdf";
     const tempPath = path.join(tempDir, `${Date.now()}-${docType}${ext}`);
     fs.writeFileSync(tempPath, buffer);
-
     const oracleFileName = `staff-${staffId}-${docType}-${Date.now()}${ext}`;
     const publicUrl = await oracleService.uploadFile(tempPath, oracleFileName);
     fs.unlinkSync(tempPath);
-
     return {
       url: publicUrl,
       publicId: oracleFileName,
@@ -433,7 +390,6 @@ service._uploadFromUrl = async (url, staffId, docType) => {
       uploadedAt: new Date(),
     };
   } catch (error) {
-    console.error("Upload from URL error:", error);
     return null;
   }
 };

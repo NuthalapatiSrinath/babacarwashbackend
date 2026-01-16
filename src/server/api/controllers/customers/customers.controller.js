@@ -3,18 +3,65 @@ const controller = module.exports;
 const ExcelJS = require("exceljs");
 const moment = require("moment");
 
-// ✅ UPDATED: Export Data (Returns JSON for Frontend to generate Excel)
+// ✅ UPDATED: Export Data (Now Generates an Excel File)
 controller.exportData = async (req, res) => {
   try {
     const { user, query } = req;
     // Service returns an array of flattened customer objects
     const data = await service.exportData(user, query);
 
-    return res.status(200).json({
-      statusCode: 200,
-      message: "success",
-      data,
+    // Create Excel Workbook
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Customers");
+
+    // Define Columns
+    worksheet.columns = [
+      { header: "Customer Name", key: "fullName", width: 25 },
+      { header: "Mobile", key: "mobile", width: 15 },
+      { header: "Email", key: "email", width: 25 },
+      { header: "Vehicle No", key: "registration_no", width: 15 },
+      { header: "Parking No", key: "parking_no", width: 15 },
+      { header: "Building", key: "building", width: 20 },
+      { header: "Flat No", key: "flat_no", width: 10 },
+      { header: "Amount", key: "amount", width: 10 },
+      { header: "Advance", key: "advance_amount", width: 10 },
+      { header: "Cleaner", key: "worker", width: 20 },
+      { header: "Schedule", key: "schedule_type", width: 15 },
+      { header: "Days", key: "schedule_days", width: 20 },
+      { header: "Start Date", key: "start_date", width: 15 },
+    ];
+
+    // Add Rows
+    data.forEach((row) => {
+      worksheet.addRow({
+        fullName: `${row.firstName || ""} ${row.lastName || ""}`.trim(),
+        mobile: row.mobile,
+        email: row.email,
+        registration_no: row.registration_no,
+        parking_no: row.parking_no,
+        building: row.building,
+        flat_no: row.flat_no,
+        amount: row.amount,
+        advance_amount: row.advance_amount,
+        worker: row.worker,
+        schedule_type: row.schedule_type,
+        schedule_days: row.schedule_days,
+        start_date: row.start_date,
+      });
     });
+
+    // Send File Response
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=customers_${moment().format("YYYY-MM-DD")}.xlsx`
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
   } catch (error) {
     console.error("❌ [EXPORT CONTROLLER] Error:", error);
     return res
