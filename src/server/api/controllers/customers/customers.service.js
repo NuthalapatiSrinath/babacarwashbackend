@@ -54,7 +54,7 @@ service.list = async (userInfo, query) => {
     // Add Building & Worker Search Logic (Existing)
     const buildings = await BuildingsModel.find(
       { isDeleted: false, name: searchRegex },
-      { _id: 1 }
+      { _id: 1 },
     ).lean();
     if (buildings.length) {
       orConditions.push({ building: { $in: buildings.map((e) => e._id) } });
@@ -62,7 +62,7 @@ service.list = async (userInfo, query) => {
 
     const workers = await WorkersModel.find(
       { isDeleted: false, name: searchRegex },
-      { _id: 1 }
+      { _id: 1 },
     ).lean();
     if (workers.length) {
       orConditions.push({
@@ -108,7 +108,7 @@ service.list = async (userInfo, query) => {
       }
       // Filter vehicles based on active tab status
       customer.vehicles = customer.vehicles.filter(
-        (v) => v.status === (Number(query.status) || 1)
+        (v) => v.status === (Number(query.status) || 1),
       );
     }
   }
@@ -144,7 +144,7 @@ service.update = async (userInfo, id, payload) => {
   await CustomersModel.updateOne({ _id: id }, { $set: payload });
   await CustomersModel.updateOne(
     { _id: id, "vehicles._id": vehicle._id },
-    { $set: { "vehicles.$": vehicle } }
+    { $set: { "vehicles.$": vehicle } },
   );
   const customerData = await CustomersModel.findOne({ _id: id }).lean();
   await JobsService.createJob(customerData);
@@ -158,14 +158,14 @@ service.delete = async (userInfo, id, reason) => {
       deletedBy: userInfo._id,
       deletedAt: new Date(),
       deleteReason: reason || null,
-    }
+    },
   );
 };
 
 service.undoDelete = async (userInfo, id) => {
   return await CustomersModel.updateOne(
     { _id: id },
-    { isDeleted: false, updatedBy: userInfo._id }
+    { isDeleted: false, updatedBy: userInfo._id },
   );
 };
 
@@ -179,7 +179,7 @@ service.vehicleDeactivate = async (userInfo, id, payload) => {
         "vehicles.$.deactivateDate": payload.deactivateDate,
         "vehicles.$.deactivatedBy": userInfo._id,
       },
-    }
+    },
   );
 };
 
@@ -192,21 +192,21 @@ service.vehicleActivate = async (userInfo, id, payload) => {
         "vehicles.$.start_date": payload.start_date,
         "vehicles.$.activatedBy": userInfo._id,
       },
-    }
+    },
   );
 };
 
 service.deactivate = async (userInfo, id, payload) => {
   await CustomersModel.updateOne(
     { _id: id },
-    { $set: { status: 2, ...payload } }
+    { $set: { status: 2, ...payload } },
   );
 };
 
 service.archive = async (userInfo, id, payload) => {
   return await CustomersModel.updateOne(
     { _id: id },
-    { $set: { status: 9, archivedAt: new Date(), archivedBy: userInfo._id } }
+    { $set: { status: 9, archivedAt: new Date(), archivedBy: userInfo._id } },
   );
 };
 
@@ -312,23 +312,23 @@ service.importData = async (userInfo, excelData) => {
           const customerUpdateData = buildPayload.customer(
             iterator,
             location,
-            building
+            building,
           );
           await CustomersModel.updateOne(
             { _id: customerInfo._id },
-            { $set: customerUpdateData }
+            { $set: customerUpdateData },
           );
 
           const regNo = iterator.registration_no;
           const hasVehicle = customerInfo.vehicles.find(
-            (v) => v.registration_no === regNo
+            (v) => v.registration_no === regNo,
           );
 
           if (hasVehicle) {
             const vehicleUpdateData = buildPayload.vehicle(iterator, worker);
             await CustomersModel.updateOne(
               { "vehicles._id": hasVehicle._id },
-              { $set: { "vehicles.$": vehicleUpdateData } }
+              { $set: { "vehicles.$": vehicleUpdateData } },
             );
             counts.success++;
             continue;
@@ -341,7 +341,7 @@ service.importData = async (userInfo, excelData) => {
         if (addVehicle) {
           await CustomersModel.updateOne(
             { _id: customerInfo._id },
-            { $push: { vehicles: vehicleInfo } }
+            { $push: { vehicles: vehicleInfo } },
           );
         } else {
           // CREATE NEW
@@ -429,15 +429,15 @@ service.exportData = async (userInfo, query) => {
   // 4. Create Maps
   const buildingMap = buildings.reduce(
     (acc, cur) => ({ ...acc, [cur._id]: cur.name }),
-    {}
+    {},
   );
   const locationMap = locations.reduce(
     (acc, cur) => ({ ...acc, [cur._id]: cur.address }),
-    {}
+    {},
   );
   const workerMap = workers.reduce(
     (acc, cur) => ({ ...acc, [cur._id]: cur.name }),
-    {}
+    {},
   );
 
   // 5. Map Export Data
