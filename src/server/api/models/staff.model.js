@@ -4,11 +4,11 @@ const mongoose = require("mongoose");
 
 /**
  * Staff Schema
- * Updated with Mobile, Email, Visa Number, and flexible Site field
+ * Updated to support Mixed types for Site/Mall to handle legacy data (strings) + new data (ObjectIds)
  */
 const schema = new mongoose.Schema(
   {
-    // Auto-incremented ID from CounterService
+    // Auto-incremented ID
     id: { type: Number },
 
     // Core Personal Details
@@ -16,22 +16,22 @@ const schema = new mongoose.Schema(
     employeeCode: { type: String, unique: true },
     companyName: { type: String },
 
-    // ✅ Flexible Site Field: Accepts ObjectId (from Dropdown) OR String (from Excel)
-    // Ref points to 'sites' model for population when an ID is present
+    // ✅ FIXED: Use 'Mixed' to prevent crash on old data (e.g., "Dubai")
     site: { type: mongoose.Schema.Types.Mixed, ref: "sites" },
+    mall: { type: mongoose.Schema.Types.Mixed, ref: "malls" },
 
     joiningDate: { type: Date },
-    mobile: { type: String }, // ✅ Added: Mobile Number
-    email: { type: String }, // ✅ Added: Email Address
+    mobile: { type: String },
+    email: { type: String },
 
-    // ✅ Profile Image structure for Cloud/Oracle Storage
+    // Profile Image
     profileImage: {
       url: { type: String },
       publicId: { type: String },
       filename: { type: String },
     },
 
-    // Passport Details
+    // Passport
     passportNumber: { type: String },
     passportExpiry: { type: Date },
     passportDocument: {
@@ -41,8 +41,8 @@ const schema = new mongoose.Schema(
       uploadedAt: { type: Date },
     },
 
-    // ✅ Visa Details (Updated with Visa Number)
-    visaNumber: { type: String }, // ✅ Added: Visa Number
+    // Visa
+    visaNumber: { type: String },
     visaExpiry: { type: Date },
     visaDocument: {
       url: String,
@@ -51,7 +51,7 @@ const schema = new mongoose.Schema(
       uploadedAt: { type: Date },
     },
 
-    // Emirates ID Details
+    // Emirates ID
     emiratesId: { type: String },
     emiratesIdExpiry: { type: Date },
     emiratesIdDocument: {
@@ -70,12 +70,16 @@ const schema = new mongoose.Schema(
   },
   {
     versionKey: false,
-    strict: false, // Allows flexibility for dynamic fields from Excel if needed
-    timestamps: true, // Automatically adds createdAt and updatedAt
-  }
+    strict: false,
+    timestamps: true,
+  },
 );
 
-// Indexes for better search performance
-schema.index({ name: "text", employeeCode: "text", mobile: "text" });
+schema.index({
+  name: "text",
+  employeeCode: "text",
+  mobile: "text",
+  email: "text",
+});
 
 module.exports = mongoose.model("staff", schema);
