@@ -53,11 +53,11 @@ controller.exportData = async (req, res) => {
     // Send File Response
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=customers_${moment().format("YYYY-MM-DD")}.xlsx`
+      `attachment; filename=customers_${moment().format("YYYY-MM-DD")}.xlsx`,
     );
 
     await workbook.xlsx.write(res);
@@ -70,7 +70,7 @@ controller.exportData = async (req, res) => {
   }
 };
 
-// ✅ UPDATED: Import Data
+// ✅ UPDATED: Import Datad
 controller.importData = async (req, res) => {
   try {
     console.log("🔵 [IMPORT CONTROLLER] Starting import...");
@@ -290,11 +290,11 @@ controller.exportWashesList = async (req, res) => {
 
     res.setHeader(
       "Content-Type",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=washes_report_${moment().format("YYYY-MM-DD")}.xlsx`
+      `attachment; filename=washes_report_${moment().format("YYYY-MM-DD")}.xlsx`,
     );
     await workbook.xlsx.write(res);
     res.end();
