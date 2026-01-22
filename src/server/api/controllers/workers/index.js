@@ -11,6 +11,17 @@ const MODULE = "workers"; // Used for permission checks
 // =========================================================================
 // 1. STATIC & SPECIAL ROUTES (MUST BE AT THE TOP)
 // =========================================================================
+// ✅ NEW ROUTE
+router.get(
+  "/monthly-records",
+  AuthHelper.authenticate,
+  controller.getMonthlyRecords,
+);
+router.get(
+  "/yearly-records",
+  AuthHelper.authenticate,
+  controller.getYearlyRecords,
+);
 
 // ✅ EXPORT / IMPORT / TEMPLATE (From Staff)
 router.get(

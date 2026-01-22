@@ -11,7 +11,8 @@ const oracleService = require("../../../cloud/oracle");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
-
+const moment = require("moment"); // ✅ Required for dates
+// ... keep existing imports (WorkersModel, OnewashModel, JobsModel, etc.)
 const service = module.exports;
 
 // ==========================================
@@ -717,4 +718,236 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
 
   console.log("🏁 [IMPORT COMPLETE]", results);
   return results;
+};
+service.monthlyRecords = async (userInfo, query) => {
+  const year = parseInt(query.year);
+  const month = parseInt(query.month); // 0 = Jan
+  const targetWorkerId = query.workerId; // ✅ NEW: Filter by specific worker
+
+  if (isNaN(year) || isNaN(month)) {
+    throw new Error("Invalid Year or Month");
+  }
+
+  // Date Range
+  const startDate = moment(new Date(year, month, 1)).startOf("month");
+  const endDate = moment(new Date(year, month, 1)).endOf("month");
+  const daysInMonth = startDate.daysInMonth();
+
+  // 1. Build Queries
+  const onewashQuery = {
+    isDeleted: false,
+    createdAt: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+    worker: { $exists: true, $ne: null },
+  };
+
+  const jobsQuery = {
+    isDeleted: false,
+    status: "completed",
+    completedDate: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+    worker: { $exists: true, $ne: null },
+  };
+
+  // ✅ Apply Single Worker Filter
+  if (targetWorkerId) {
+    onewashQuery.worker = targetWorkerId;
+    jobsQuery.worker = targetWorkerId;
+  }
+
+  // Supervisor Limits
+  if (userInfo.role === "supervisor") {
+    if (userInfo.service_type === "mall") onewashQuery.mall = userInfo.mall;
+    if (userInfo.service_type === "residence")
+      onewashQuery.building = { $in: userInfo.buildings };
+    if (userInfo.service_type === "residence")
+      jobsQuery.building = { $in: userInfo.buildings };
+  }
+
+  // 2. Fetch Data
+  const [onewashData, jobsData] = await Promise.all([
+    OnewashModel.find(onewashQuery)
+      .populate("worker", "name employeeCode mobile service_type")
+      .lean(),
+    JobsModel.find(jobsQuery)
+      .populate("worker", "name employeeCode mobile service_type")
+      .lean(),
+  ]);
+
+  // 3. Aggregate
+  const workerMap = {};
+
+  const processJob = (job, dateField) => {
+    if (!job.worker || !job.worker._id) return;
+
+    const wId = job.worker._id.toString();
+    const dateVal = job[dateField];
+    if (!dateVal) return;
+
+    const day = moment(dateVal).date(); // 1-31
+
+    if (!workerMap[wId]) {
+      workerMap[wId] = {
+        id: wId,
+        name: job.worker.name || "Unknown",
+        code: job.worker.employeeCode || "N/A",
+        mobile: job.worker.mobile || "-",
+        serviceType: job.worker.service_type || "N/A",
+        days: {},
+        totalCars: 0,
+        totalTip: 0,
+      };
+    }
+
+    // Counts
+    workerMap[wId].days[day] = (workerMap[wId].days[day] || 0) + 1;
+    workerMap[wId].totalCars++;
+
+    // Tips
+    if (job.tip_amount) {
+      const tip = Number(job.tip_amount);
+      if (!isNaN(tip)) workerMap[wId].totalTip += tip;
+    }
+  };
+
+  onewashData.forEach((job) => processJob(job, "createdAt"));
+  jobsData.forEach((job) => processJob(job, "completedDate"));
+
+  // 4. Format
+  const gridData = Object.values(workerMap).map((w) => {
+    const dayData = {};
+    for (let d = 1; d <= daysInMonth; d++) {
+      dayData[`day_${d}`] = w.days[d] || 0;
+    }
+    return {
+      ...w, // includes id, name, mobile, serviceType
+      ...dayData,
+      total: w.totalCars,
+      tips: w.totalTip,
+    };
+  });
+
+  return {
+    meta: { year, month, daysInMonth },
+    data: gridData,
+  };
+};
+// ... existing imports
+
+// ==========================================
+// 🔵 YEARLY / MULTI-MONTH RECORD BREAKDOWN
+// ==========================================
+service.yearlyRecords = async (userInfo, query) => {
+  const workerId = query.workerId;
+  const mode = query.mode; // 'year' or 'last6'
+  const year = parseInt(query.year) || new Date().getFullYear();
+
+  if (!workerId) throw new Error("Worker ID is required");
+
+  let startDate, endDate;
+
+  // 1. Calculate Date Range
+  if (mode === "last6") {
+    // Last 6 months including current
+    startDate = moment().subtract(5, "months").startOf("month");
+    endDate = moment().endOf("month");
+  } else {
+    // Specific Year (Jan 1 - Dec 31)
+    startDate = moment(new Date(year, 0, 1)).startOf("day");
+    endDate = moment(new Date(year, 11, 31)).endOf("day");
+  }
+
+  console.log(
+    `📊 Multi-Month Report: ${startDate.format("YYYY-MM-DD")} to ${endDate.format("YYYY-MM-DD")}`,
+  );
+
+  // 2. Fetch Data
+  const onewashQuery = {
+    isDeleted: false,
+    createdAt: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+    worker: workerId,
+  };
+
+  const jobsQuery = {
+    isDeleted: false,
+    status: "completed",
+    completedDate: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+    worker: workerId,
+  };
+
+  const [onewashData, jobsData] = await Promise.all([
+    OnewashModel.find(onewashQuery).select("createdAt tip_amount").lean(),
+    JobsModel.find(jobsQuery).select("completedDate").lean(),
+  ]);
+
+  // 3. Generate Month Buckets
+  // We need to create an array of months based on the range
+  const monthsData = [];
+  let current = startDate.clone();
+
+  while (current.isSameOrBefore(endDate, "month")) {
+    monthsData.push({
+      key: current.format("YYYY-MM"), // Unique key for mapping
+      label: current.format("MMMM YYYY"), // Display Label
+      daysInMonth: current.daysInMonth(),
+      days: {}, // Will hold 1:5, 2:3, etc.
+      totalCars: 0,
+      totalTips: 0,
+    });
+    current.add(1, "month");
+  }
+
+  // 4. Processing Helper
+  const processJob = (job, dateField, type) => {
+    const dateVal = job[dateField];
+    if (!dateVal) return;
+
+    const m = moment(dateVal);
+    const monthKey = m.format("YYYY-MM");
+    const day = m.date(); // 1-31
+
+    const monthObj = monthsData.find((md) => md.key === monthKey);
+    if (monthObj) {
+      // Increment Day
+      monthObj.days[day] = (monthObj.days[day] || 0) + 1;
+
+      // Increment Totals
+      monthObj.totalCars++;
+      if (type === "onewash" && job.tip_amount) {
+        monthObj.totalTips += Number(job.tip_amount) || 0;
+      }
+    }
+  };
+
+  // Process
+  onewashData.forEach((job) => processJob(job, "createdAt", "onewash"));
+  jobsData.forEach((job) => processJob(job, "completedDate", "residence"));
+
+  // 5. Final Formatting for Grid
+  // Convert sparse 'days' object to full day_1...day_31 properties
+  const gridData = monthsData.map((m) => {
+    const dayProps = {};
+    for (let d = 1; d <= 31; d++) {
+      dayProps[`day_${d}`] = d <= m.daysInMonth ? m.days[d] || 0 : null; // null for invalid days (e.g. Feb 30)
+    }
+    return {
+      month: m.label,
+      ...dayProps,
+      total: m.totalCars,
+      tips: m.totalTips,
+    };
+  });
+
+  // Calculate Grand Total for the whole period
+  const grandTotal = gridData.reduce(
+    (acc, curr) => ({
+      cars: acc.cars + curr.total,
+      tips: acc.tips + curr.tips,
+    }),
+    { cars: 0, tips: 0 },
+  );
+
+  return {
+    period: mode === "last6" ? "Last 6 Months" : `Year ${year}`,
+    data: gridData,
+    grandTotal,
+  };
 };

@@ -1,11 +1,19 @@
 const service = require("./workers.service");
 const fs = require("fs"); // ✅ Required for File Uploads/Import
 const controller = module.exports;
-
+const WorkerService = require("./workers.service");
 // ==========================================
 // 🟢 EXISTING WORKER METHODS (UNCHANGED)
 // ==========================================
-
+exports.getYearlyRecords = async (req, res) => {
+  try {
+    const data = await WorkerService.yearlyRecords(req.user, req.query);
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error("Yearly Records Error:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
 // --- LIST ---
 controller.list = async (req, res) => {
   try {
@@ -321,5 +329,13 @@ controller.importData = async (req, res) => {
       message: "Internal server error",
       error: error.message || error,
     });
+  }
+};
+exports.getMonthlyRecords = async (req, res) => {
+  try {
+    const data = await WorkerService.monthlyRecords(req.user, req.query);
+    return res.status(200).json(data);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
   }
 };
