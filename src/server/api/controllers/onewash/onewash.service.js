@@ -8,7 +8,7 @@ const moment = require("moment");
 const exceljs = require("exceljs");
 const service = module.exports;
 
-// --- UTILS ---
+// --- UTILS ---s
 const isValidId = (id) =>
   id && typeof id === "string" && id.match(/^[0-9a-fA-F]{24}$/);
 
@@ -82,7 +82,7 @@ service.list = async (userInfo, query) => {
     // Find workers matching name
     const matchingWorkers = await WorkersModel.find(
       { isDeleted: false, name: searchRegex },
-      { _id: 1 }
+      { _id: 1 },
     ).lean();
 
     const orConditions = [
@@ -185,7 +185,7 @@ service.update = async (userInfo, id, payload) => {
       { _id: id },
       {
         $set: { settled: payload.settled, settledDate: payload.settledDate },
-      }
+      },
     );
     return;
   }
@@ -240,7 +240,7 @@ service.update = async (userInfo, id, payload) => {
         parking_no: payload.parking_no,
         registration_no: payload.registration_no,
       },
-    }
+    },
   );
 };
 
@@ -248,18 +248,18 @@ service.update = async (userInfo, id, payload) => {
 service.delete = async (userInfo, id, payload) => {
   await PaymentsModel.updateOne(
     { job: id },
-    { $set: { isDeleted: true, deletedBy: userInfo._id } }
+    { $set: { isDeleted: true, deletedBy: userInfo._id } },
   );
   return await OneWashModel.updateOne(
     { _id: id },
-    { $set: { isDeleted: true, deletedBy: userInfo._id } }
+    { $set: { isDeleted: true, deletedBy: userInfo._id } },
   );
 };
 
 service.undoDelete = async (userInfo, id) => {
   return await OneWashModel.updateOne(
     { _id: id },
-    { isDeleted: false, updatedBy: userInfo._id }
+    { isDeleted: false, updatedBy: userInfo._id },
   );
 };
 
@@ -310,7 +310,7 @@ service.exportData = async (userInfo, query) => {
     const searchRegex = { $regex: query.search, $options: "i" };
     const matchedWorkers = await WorkersModel.find(
       { isDeleted: false, name: searchRegex },
-      { _id: 1 }
+      { _id: 1 },
     ).lean();
 
     findQuery.$or = [
@@ -447,7 +447,7 @@ service.monthlyStatement = async (userInfo, query) => {
     // Recalculate tips correctly
     tipAmount = workerData.reduce(
       (acc, curr) => acc + (Number(curr.tip_amount) || 0),
-      0
+      0,
     );
 
     const dayValues = days.map((d) => daywiseCounts[d] || "");
