@@ -31,7 +31,6 @@ service.list = async (userInfo, rawQuery) => {
   const paginationData = CommonHelper.paginationData(query);
   const workers = [];
 
-  // Supervisor Worker Logic
   if (userInfo.role == "supervisor" && !query.worker) {
     const workersFindQuery = {
       isDeleted: false,
@@ -49,22 +48,17 @@ service.list = async (userInfo, rawQuery) => {
     }
   }
 
-  // 1. Build Query Safely (MATCHING EXPORT LOGIC)
   const findQuery = {
     isDeleted: false,
-
-    // CRITICAL: Exclude bad data to prevent pagination crashes
     worker: { $ne: "" },
     customer: { $ne: "" },
     building: { $ne: "" },
 
-    // Date Filter (Robust)
     ...(query.startDate && !isNaN(new Date(query.startDate).getTime())
       ? {
           createdAt: {
             $gte: new Date(query.startDate),
             $lte: (() => {
-              // Handle end date logic safely (Full Day)
               let end = query.endDate
                 ? new Date(query.endDate)
                 : new Date(query.startDate);
@@ -76,26 +70,25 @@ service.list = async (userInfo, rawQuery) => {
         }
       : null),
 
-    // Worker Filter
     ...(isValidId(query.worker)
       ? { worker: query.worker }
       : userInfo.role == "supervisor"
-      ? { worker: { $in: workers } }
-      : null),
+        ? { worker: { $in: workers } }
+        : null),
 
-    // Other Filters (Only if valid IDs)
     ...(isValidId(query.customer) ? { customer: query.customer } : null),
     ...(isValidId(query.building) ? { building: query.building } : null),
     ...(isValidId(query.mall) ? { mall: query.mall } : null),
     ...(query.status ? { status: query.status } : null),
   };
 
-  // 2. Search Logic
   if (query.search) {
     const customers = await CustomersModel.find({
       isDeleted: false,
       $or: [
-        { "vehicles.registration_no": { $regex: query.search, $options: "i" } },
+        {
+          "vehicles.registration_no": { $regex: query.search, $options: "i" },
+        },
         { "vehicles.parking_no": { $regex: query.search, $options: "i" } },
       ],
     }).lean();
@@ -113,14 +106,12 @@ service.list = async (userInfo, rawQuery) => {
 
   const total = await JobsModel.countDocuments(findQuery);
 
-  // 3. Fetch Data RAW first
   let data = await JobsModel.find(findQuery)
     .sort({ completedDate: -1 })
     .skip(paginationData.skip)
     .limit(paginationData.limit)
     .lean();
 
-  // 4. Safe Populate (Prevents crash on last page if bad data exists)
   try {
     data = await JobsModel.populate(data, [
       { path: "customer", model: "customers" },
@@ -132,11 +123,10 @@ service.list = async (userInfo, rawQuery) => {
     console.warn("List Populate Warning (Ignored):", e.message);
   }
 
-  // 5. Post-Process Vehicles
   for (const iterator of data) {
     if (iterator.customer && iterator.customer.vehicles) {
       iterator.vehicle = iterator.customer.vehicles.find(
-        (e) => e._id == iterator.vehicle
+        (e) => e._id == iterator.vehicle,
       );
     }
   }
@@ -155,7 +145,6 @@ service.create = async (userInfo, payload) => {
     updatedBy: userInfo._id,
     id,
     ...payload,
-    // Ensure we don't save empty strings for references
     worker: payload.worker || null,
     customer: payload.customer || null,
     vehicle: payload.vehicle || null,
@@ -167,34 +156,29 @@ service.create = async (userInfo, payload) => {
 };
 
 service.update = async (userInfo, id, payload) => {
-  // Clean payload to avoid saving empty strings
   if (payload.worker === "") payload.worker = null;
   if (payload.customer === "") payload.customer = null;
-
   await JobsModel.updateOne({ _id: id }, { $set: payload });
 };
 
 service.delete = async (userInfo, id, payload) => {
   return await JobsModel.updateOne(
     { _id: id },
-    { isDeleted: true, deletedBy: userInfo._id }
+    { isDeleted: true, deletedBy: userInfo._id },
   );
 };
 
 service.undoDelete = async (userInfo, id) => {
   return await JobsModel.updateOne(
     { _id: id },
-    { isDeleted: false, updatedBy: userInfo._id }
+    { isDeleted: false, updatedBy: userInfo._id },
   );
 };
 
 // --- EXPORT DATA ---
 service.exportData = async (userInfo, rawQuery) => {
-  console.log("🚀 [RESIDENCE EXPORT] Raw:", rawQuery);
   const query = cleanQuery(rawQuery);
-
   try {
-    // 1. Worker filtering logic
     const workers = [];
     if (userInfo.role == "supervisor" && !query.worker) {
       const workersFindQuery = {
@@ -213,16 +197,12 @@ service.exportData = async (userInfo, rawQuery) => {
       }
     }
 
-    // 2. Build Query Safely (MATCHING LIST LOGIC)
     const findQuery = {
       isDeleted: false,
-
-      // CRITICAL: Exclude invalid/empty IDs to prevent Populate Crash
       worker: { $ne: "" },
       customer: { $ne: "" },
       building: { $ne: "" },
 
-      // Date Filter (Robust)
       ...(query.startDate && !isNaN(new Date(query.startDate).getTime())
         ? {
             createdAt: {
@@ -239,21 +219,18 @@ service.exportData = async (userInfo, rawQuery) => {
           }
         : null),
 
-      // Worker Filter
       ...(isValidId(query.worker)
         ? { worker: query.worker }
         : userInfo.role == "supervisor"
-        ? { worker: { $in: workers } }
-        : null),
+          ? { worker: { $in: workers } }
+          : null),
 
-      // Other Filters
       ...(isValidId(query.customer) ? { customer: query.customer } : null),
       ...(isValidId(query.building) ? { building: query.building } : null),
       ...(isValidId(query.mall) ? { mall: query.mall } : null),
       ...(query.status ? { status: query.status } : null),
     };
 
-    // 3. Search Logic
     if (query.search) {
       const customers = await CustomersModel.find({
         isDeleted: false,
@@ -276,16 +253,10 @@ service.exportData = async (userInfo, rawQuery) => {
       }
     }
 
-    console.log("🔍 [EXPORT DB QUERY]:", JSON.stringify(findQuery));
-
-    // 4. Fetch Data RAW (No populate yet)
     let data = await JobsModel.find(findQuery)
       .sort({ completedDate: -1 })
       .lean();
 
-    console.log(`✅ [EXPORT] Fetched ${data.length} records. Populating...`);
-
-    // 5. Safe Populate (Catches bad ID errors)
     try {
       data = await JobsModel.populate(data, [
         { path: "customer", model: "customers" },
@@ -295,10 +266,8 @@ service.exportData = async (userInfo, rawQuery) => {
       ]);
     } catch (e) {
       console.error("⚠️ [EXPORT POPULATE ERROR]:", e.message);
-      // Continue with partial data
     }
 
-    // 6. Generate Excel
     const workbook = new exceljs.Workbook();
     const worksheet = workbook.addWorksheet("Residence Jobs Report");
 
@@ -320,10 +289,9 @@ service.exportData = async (userInfo, rawQuery) => {
     data.forEach((item) => {
       let vehicleInfo = null;
       if (item.customer && item.customer.vehicles) {
-        // Find vehicle details from customer object if vehicle is just an ID
         const vId = item.vehicle?._id || item.vehicle;
         vehicleInfo = item.customer.vehicles.find(
-          (v) => v._id.toString() === vId?.toString()
+          (v) => v._id.toString() === vId?.toString(),
         );
       }
 
@@ -354,7 +322,7 @@ service.exportData = async (userInfo, rawQuery) => {
   }
 };
 
-// ... Monthly Statement remains same ...
+// --- MONTHLY STATEMENT (UPDATED WITH DAILY BREAKDOWN) ---
 service.monthlyStatement = async (userInfo, query) => {
   const findQuery = {
     isDeleted: false,
@@ -373,6 +341,38 @@ service.monthlyStatement = async (userInfo, query) => {
     ])
     .lean();
 
+  const daysInMonth = moment(findQuery.assignedDate.$gte).daysInMonth();
+
+  // ✅ 1. Return JSON with DAILY data if format=json
+  if (query.format === "json") {
+    const workerMap = {};
+    for (const iterator of data) {
+      if (iterator.worker) {
+        const wid = iterator.worker._id.toString();
+        if (!workerMap[wid]) {
+          workerMap[wid] = {
+            name: iterator.worker.name?.trim() || "Unknown",
+            code: iterator.worker.employeeCode || "N/A",
+            totalCars: 0,
+            amount: 0,
+            daily: new Array(daysInMonth).fill(0), // Array of zeros
+          };
+        }
+
+        // Calculate Day (1-31) -> Index (0-30)
+        // Note: For jobs, we use assignedDate or completedDate. Query filters by assignedDate.
+        const date = moment(iterator.assignedDate).tz("Asia/Dubai").date();
+        if (date >= 1 && date <= daysInMonth) {
+          workerMap[wid].daily[date - 1]++;
+        }
+
+        workerMap[wid].totalCars++;
+      }
+    }
+    return Object.values(workerMap);
+  }
+
+  // ✅ 2. Return Excel Workbook (Default)
   const workbook = new exceljs.Workbook();
   const reportSheet = workbook.addWorksheet("Report");
 

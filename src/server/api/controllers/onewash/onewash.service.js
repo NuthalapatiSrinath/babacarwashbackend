@@ -2,28 +2,22 @@ const OneWashModel = require("../../models/onewash.model");
 const PaymentsModel = require("../../models/payments.model");
 const WorkersModel = require("../../models/workers.model");
 const MallsModel = require("../../models/malls.model");
+const BuildingsModel = require("../../models/buildings.model");
 const CounterService = require("../../../utils/counters");
 const CommonHelper = require("../../../helpers/common.helper");
 const moment = require("moment");
 const exceljs = require("exceljs");
 const service = module.exports;
 
-// --- UTILS ---s
+// --- UTILS ---
 const isValidId = (id) =>
   id && typeof id === "string" && id.match(/^[0-9a-fA-F]{24}$/);
 
 // --- LIST ---
 service.list = async (userInfo, query) => {
-  // 1. Build Base Query
   const findQuery = { isDeleted: false };
+  if (!query.worker) findQuery.worker = { $ne: "" };
 
-  // 2. CRITICAL FIX: Exclude bad data (empty strings) to prevent Populate Crashes
-  // If we don't filter specific workers, we MUST exclude "" to avoid CastError
-  if (!query.worker) {
-    findQuery.worker = { $ne: "" };
-  }
-
-  // 3. Worker Filters from User Info (Supervisor/Mall Manager)
   const findWorkerQuery = { isDeleted: false };
   let limitToWorkerIds = null;
 
@@ -43,7 +37,6 @@ service.list = async (userInfo, query) => {
     }
   }
 
-  // 4. Date Filter
   if (query.startDate && query.startDate !== "null") {
     const start = new Date(query.startDate);
     if (!isNaN(start.getTime())) {
@@ -52,14 +45,12 @@ service.list = async (userInfo, query) => {
         : new Date(query.startDate);
       if (!query.endDate || query.endDate.length <= 10)
         end.setHours(23, 59, 59, 999);
-
       if (!isNaN(end.getTime())) {
         findQuery.createdAt = { $gte: start, $lte: end };
       }
     }
   }
 
-  // 5. Apply Specific Filters
   if (userInfo.role === "supervisor" && userInfo.service_type) {
     findQuery.service_type = userInfo.service_type;
   } else if (userInfo.role === "admin") {
@@ -68,18 +59,14 @@ service.list = async (userInfo, query) => {
     if (isValidId(query.building)) findQuery.building = query.building;
   }
 
-  // Worker Selection Logic
   if (isValidId(query.worker)) {
     findQuery.worker = query.worker;
   } else if (limitToWorkerIds) {
     findQuery.worker = { $in: limitToWorkerIds };
   }
 
-  // 6. Search Logic
   if (query.search) {
     const searchRegex = { $regex: query.search, $options: "i" };
-
-    // Find workers matching name
     const matchingWorkers = await WorkersModel.find(
       { isDeleted: false, name: searchRegex },
       { _id: 1 },
@@ -101,14 +88,12 @@ service.list = async (userInfo, query) => {
   const paginationData = CommonHelper.paginationData(query);
   const total = await OneWashModel.countDocuments(findQuery);
 
-  // 7. Fetch Data
   let data = await OneWashModel.find(findQuery)
     .sort({ _id: -1 })
     .skip(paginationData.skip)
     .limit(paginationData.limit)
     .lean();
 
-  // 8. Safe Populate (Wrapped in Try/Catch block is generally good, but the query fix above should prevent the error)
   try {
     data = await OneWashModel.populate(data, [
       { path: "worker", model: "workers", select: "name" },
@@ -119,7 +104,6 @@ service.list = async (userInfo, query) => {
     console.error("List Populate Warning:", e.message);
   }
 
-  // 9. Stats
   const totalPayments = await OneWashModel.aggregate([
     { $match: findQuery },
     { $group: { _id: "$payment_mode", amount: { $sum: "$amount" } } },
@@ -263,20 +247,13 @@ service.undoDelete = async (userInfo, id) => {
   );
 };
 
-// --- EXPORT DATA (FIXED) ---
+// --- EXPORT DATA ---
 service.exportData = async (userInfo, query) => {
-  console.log("🚀 [EXPORT START] Raw:", query);
-
-  // 1. Base Query
   const findQuery = { isDeleted: false };
-
-  // 2. CRITICAL FIX: Exclude invalid IDs that crash populate
-  // This explicitly ignores records where worker/mall is empty string ""
   findQuery.worker = { $ne: "" };
   findQuery.mall = { $ne: "" };
   findQuery.building = { $ne: "" };
 
-  // 3. Apply Filters
   if (userInfo.role === "supervisor" && userInfo.service_type) {
     findQuery.service_type = userInfo.service_type;
   } else if (userInfo.role === "admin") {
@@ -289,7 +266,6 @@ service.exportData = async (userInfo, query) => {
     findQuery.worker = query.worker;
   }
 
-  // 4. Date Filter
   if (query.startDate && query.startDate !== "null") {
     const start = new Date(query.startDate);
     if (!isNaN(start.getTime())) {
@@ -305,7 +281,6 @@ service.exportData = async (userInfo, query) => {
     }
   }
 
-  // 5. Search Logic
   if (query.search) {
     const searchRegex = { $regex: query.search, $options: "i" };
     const matchedWorkers = await WorkersModel.find(
@@ -327,9 +302,6 @@ service.exportData = async (userInfo, query) => {
     }
   }
 
-  console.log("🔍 [EXPORT DB QUERY]:", JSON.stringify(findQuery));
-
-  // 6. Fetch Data
   const data = await OneWashModel.find(findQuery)
     .populate([
       { path: "worker", model: "workers", select: "name" },
@@ -339,9 +311,6 @@ service.exportData = async (userInfo, query) => {
     .sort({ createdAt: -1 })
     .lean();
 
-  console.log(`✅ [EXPORT] Found ${data.length} records to export.`);
-
-  // 7. Generate Excel
   const workbook = new exceljs.Workbook();
   const worksheet = workbook.addWorksheet("One Wash Report");
 
@@ -386,7 +355,7 @@ service.exportData = async (userInfo, query) => {
   return workbook;
 };
 
-// --- MONTHLY ---
+// --- MONTHLY (UPDATED WITH DAILY BREAKDOWN) ---
 service.monthlyStatement = async (userInfo, query) => {
   const findQuery = {
     isDeleted: false,
@@ -405,15 +374,44 @@ service.monthlyStatement = async (userInfo, query) => {
     ])
     .lean();
 
+  const daysInMonth = moment(findQuery.createdAt.$gte).daysInMonth();
+
+  // ✅ 1. Return JSON with DAILY data if format=json
+  if (query.format === "json") {
+    const workerMap = {};
+    for (const iterator of data) {
+      if (iterator.worker) {
+        const wid = iterator.worker._id.toString();
+        if (!workerMap[wid]) {
+          workerMap[wid] = {
+            name: iterator.worker.name?.trim() || "Unknown",
+            code: iterator.worker.employeeCode || "N/A",
+            totalCars: 0,
+            amount: 0,
+            daily: new Array(daysInMonth).fill(0), // Array of 31 zeros
+          };
+        }
+
+        // Calculate Day (1-31) -> Index (0-30)
+        const date = moment(iterator.createdAt).date();
+        if (date >= 1 && date <= daysInMonth) {
+          workerMap[wid].daily[date - 1]++;
+        }
+
+        workerMap[wid].totalCars++;
+        if (iterator.tip_amount) {
+          workerMap[wid].amount += Number(iterator.tip_amount) || 0;
+        }
+      }
+    }
+    return Object.values(workerMap);
+  }
+
+  // ✅ 2. Return Excel Workbook
   const workbook = new exceljs.Workbook();
   const reportSheet = workbook.addWorksheet("Report");
 
-  const days = [
-    1,
-    ...new Array(moment(findQuery.createdAt.$gte).daysInMonth() - 1)
-      .fill(0)
-      .map((_, i) => i + 2),
-  ];
+  const days = [1, ...new Array(daysInMonth - 1).fill(0).map((_, i) => i + 2)];
   const keys = ["Sl. No", "Name", ...days, "Total Cars", "Tips Amount"];
 
   reportSheet.addRow(keys);
@@ -444,7 +442,6 @@ service.monthlyStatement = async (userInfo, query) => {
       totalCars += count;
     }
 
-    // Recalculate tips correctly
     tipAmount = workerData.reduce(
       (acc, curr) => acc + (Number(curr.tip_amount) || 0),
       0,

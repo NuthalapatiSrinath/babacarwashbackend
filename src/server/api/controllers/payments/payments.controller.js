@@ -9,7 +9,7 @@ controller.list = async (req, res) => {
     console.log(
       "✅ [BACKEND] Payments list success, returning",
       data.total,
-      "records"
+      "records",
     );
     return res
       .status(200)
@@ -180,11 +180,30 @@ controller.exportData = async (req, res) => {
   }
 };
 
+// ✅ UPDATED: Fixes the issue where PDF request got an Excel file
 controller.monthlyStatement = async (req, res) => {
   try {
     const { user, query } = req;
-    const workbook = await service.monthlyStatement(user, query);
-    workbook.xlsx
+
+    // Get result from service (could be Workbook OR JSON Array)
+    const result = await service.monthlyStatement(user, query);
+
+    // 1. If Frontend requested JSON (for PDF), return JSON response
+    if (query.format === "json") {
+      return res.status(200).json(result);
+    }
+
+    // 2. Otherwise, treat as Excel Workbook (Standard Download)
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=" + "Report.xlsx",
+    );
+
+    return result.xlsx
       .write(res)
       .then(() => {
         res.end();
@@ -194,14 +213,12 @@ controller.monthlyStatement = async (req, res) => {
         res.status(500).send("Internal Server Error");
       });
   } catch (error) {
-    console.error(error);
+    console.error("Monthly Statement Error:", error);
     return res
-      .status(200)
+      .status(200) // Keeping 200 as per your previous error handling preference, though 500 is standard
       .json({ status: false, message: "Internal server error", error });
   }
 };
-// ... existing imports
-
 controller.bulkUpdateStatus = async (req, res) => {
   try {
     const { user, body } = req;

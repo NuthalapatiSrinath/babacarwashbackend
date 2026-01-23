@@ -33,13 +33,11 @@ controller.create = async (req, res) => {
     return res.status(200).json({ statusCode: 200, message: "success", data });
   } catch (error) {
     if (error.code == 11000) {
-      return res
-        .status(409)
-        .json({
-          statusCode: 409,
-          message: "Oops! Location already exists",
-          error,
-        });
+      return res.status(409).json({
+        statusCode: 409,
+        message: "Oops! Location already exists",
+        error,
+      });
     }
     console.error(error);
     return res.status(500).json({ message: "Internal server error", error });
@@ -103,11 +101,19 @@ controller.exportData = async (req, res) => {
   }
 };
 
+// ✅ UPDATED: Handles both Excel stream and JSON response
 controller.monthlyStatement = async (req, res) => {
   try {
     const { user, query } = req;
-    const workbook = await service.monthlyStatement(user, query);
-    workbook.xlsx
+    const result = await service.monthlyStatement(user, query);
+
+    // If result is not a workbook (it's JSON data), send JSON
+    if (query.format === "json") {
+      return res.status(200).json(result);
+    }
+
+    // Default: Send Excel File
+    result.xlsx
       .write(res)
       .then(() => {
         res.end();
