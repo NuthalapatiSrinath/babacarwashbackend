@@ -673,18 +673,27 @@ service.importData = async (userInfo, excelData) => {
 
     for (const iterator of excelData) {
       try {
-        if (!iterator.mobile) throw "Mobile number is required";
+        // ✅ Mobile number is now optional, but registration_no is required
         if (!iterator.registration_no)
           throw "Vehicle registration number is required";
 
-        // Check if customer exists
+        let customerInfo = null;
+
+        // ✅ FIX: Generate unique mobile number if not provided
+        // This ensures each customer without mobile is treated as separate
+        if (!iterator.mobile || !iterator.mobile.trim()) {
+          iterator.mobile = await generateAutoMobile();
+          console.log(
+            `📱 Generated auto mobile for ${iterator.firstName || "customer"}: ${iterator.mobile}`,
+          );
+        }
+
+        // Search for existing customer by mobile number
         const findUserQuery = {
           isDeleted: false,
-          $or: [{ mobile: iterator.mobile }],
+          mobile: iterator.mobile.trim(),
         };
-        if (iterator.email) findUserQuery.$or.push({ email: iterator.email });
-
-        let customerInfo = await CustomersModel.findOne(findUserQuery);
+        customerInfo = await CustomersModel.findOne(findUserQuery);
 
         const location = iterator.location
           ? await LocationsModel.findOne({
@@ -1160,6 +1169,7 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
 
   const results = { success: 0, errors: [], created: 0, updated: 0 };
   const customerGroups = new Map(); // Group vehicles by customer identifier
+  let lastAutoMobileNumber = null; // Track last generated mobile in this session
 
   // Step 1: Group rows by customer (by mobile or firstName+lastName)
   for (const row of excelData) {
@@ -1178,20 +1188,19 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
       // Auto-generate mobile if not provided
       let mobile = row.mobile;
       if (!mobile || mobile.trim() === "") {
-        // Check if we already generated a mobile for this customer in this batch
-        const customerKey =
-          `${row.firstName || "Customer"}-${row.lastName || ""}`.toLowerCase();
-        if (
-          customerGroups.has(customerKey) &&
-          customerGroups.get(customerKey).mobile
-        ) {
-          mobile = customerGroups.get(customerKey).mobile;
-        } else {
+        // Each row without mobile gets a UNIQUE auto-generated number
+        if (lastAutoMobileNumber === null) {
+          // First time - query the database
           mobile = await generateAutoMobile();
-          console.log(
-            `📱 Auto-generated mobile: ${mobile} for ${row.firstName || "Customer"}`,
-          );
+          lastAutoMobileNumber = parseInt(mobile.substring(7)); // Extract the number part
+        } else {
+          // Subsequent times - increment from last generated
+          lastAutoMobileNumber++;
+          mobile = `2000000${String(lastAutoMobileNumber).padStart(3, "0")}`;
         }
+        console.log(
+          `📱 Auto-generated mobile: ${mobile} for ${row.firstName || "Customer"}`,
+        );
       }
 
       // Use mobile as the primary grouping key
@@ -1306,7 +1315,9 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
           } else {
             // Vehicle doesn't exist anywhere, add it
             customer.vehicles.push(newVehicle);
-            console.log(`  ➕ Added new vehicle: ${newVehicle.registration_no}`);
+            console.log(
+              `  ➕ Added new vehicle: ${newVehicle.registration_no}`,
+            );
           }
         }
 
