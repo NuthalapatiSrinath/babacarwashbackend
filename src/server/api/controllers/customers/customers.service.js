@@ -189,6 +189,51 @@ service.list = async (userInfo, query) => {
       Object.entries(vehicleDuesMap).slice(0, 3),
     );
 
+    // Fetch last paid payment for each vehicle to show payment method
+    const allPaidPayments = await PaymentsModel.find({
+      customer: { $in: customerIds },
+      isDeleted: false,
+      status: "completed",
+    })
+      .sort({ collectedDate: -1, _id: -1 })
+      .lean();
+
+    console.log(
+      "💳 [CUSTOMER LIST] Found",
+      allPaidPayments.length,
+      "completed payments",
+    );
+
+    // Track last payment for each vehicle
+    const vehicleLastPaymentMap = {};
+
+    allPaidPayments.forEach((payment) => {
+      const customerId = payment.customer?.toString();
+      const registrationNo = payment.vehicle?.registration_no;
+
+      if (!registrationNo || !customerId) return;
+
+      const vehicleKey = `${customerId}_${registrationNo}`;
+
+      // Only store the first (most recent) payment for each vehicle
+      if (!vehicleLastPaymentMap[vehicleKey]) {
+        const isMonthEndClosed = (payment.notes || "")
+          .toLowerCase()
+          .includes("closed by month-end");
+
+        vehicleLastPaymentMap[vehicleKey] = {
+          amount: payment.amount_paid || 0,
+          paymentMethod: isMonthEndClosed ? "monthly_close" : "customer",
+          date: payment.collectedDate || payment.updatedAt,
+        };
+      }
+    });
+
+    console.log(
+      "💳 [CUSTOMER LIST] Last payment map entries:",
+      Object.keys(vehicleLastPaymentMap).length,
+    );
+
     // Assign dues to each vehicle and customer
     data.forEach((customer) => {
       const customerId = customer._id.toString();
@@ -211,6 +256,12 @@ service.list = async (userInfo, query) => {
           };
           vehicle.pendingDues = vehicleDues.totalDue;
           vehicle.pendingCount = vehicleDues.pendingCount;
+
+          // Add last payment info
+          const lastPayment = vehicleLastPaymentMap[vehicleKey];
+          if (lastPayment) {
+            vehicle.lastPayment = lastPayment;
+          }
         });
       }
     });
