@@ -32,6 +32,7 @@ const schema = new mongoose.Schema(
     building: { type: String, ref: "buildings" },
     flat_no: { type: String },
     vehicles: { type: [vehicleSchema] },
+    notes: { type: String }, // Customer notes - can be edited from Residence Payments
     status: { type: Number, default: 1 },
     deactivateReason: { type: String },
     deactivateDate: { type: Date },

@@ -155,7 +155,6 @@ controller.runScheduler = async (req, res) => {
         $gte: checkDate.toDate(),
         $lt: checkDate.clone().add(1, "day").toDate(),
       },
-      createdBy: { $in: ["Cron Scheduler", "Manual Scheduler"] },
       isDeleted: { $ne: true }, // Only count non-deleted jobs
     });
 

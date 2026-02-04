@@ -724,7 +724,8 @@ service.monthlyStatement = async (userInfo, query) => {
           ? item.receipt_no || `RCP${String(item.id).padStart(6, "0")}`
           : "-", // 15. Receipt Number (Only for completed payments)
       dueDate: moment(item.createdAt).endOf("month").format("DD-MM-YYYY"), // 16. Payment Due Date (End of billing month)
-      remarks: item.notes || "-", // 17. Remarks
+      remarks: item.notes || "-", // 17. Payment Remarks
+      customerNotes: item.customer?.notes || "-", // 18. Customer Notes
 
       // Extra metadata for Grouping
       buildingName:
@@ -745,6 +746,8 @@ service.monthlyStatement = async (userInfo, query) => {
       "   - Vehicle advance_amount:",
       data[0].vehicle?.advance_amount,
     );
+    console.log("   - Customer Notes:", sample.customerNotes);
+    console.log("   - Customer Object:", data[0].customer);
   }
 
   // --- A. JSON RESPONSE (For Frontend PDF Generation) ---
@@ -796,11 +799,12 @@ service.monthlyStatement = async (userInfo, query) => {
     { header: "Prev. Payment Due", key: "prevDue", width: 15 },
     { header: "Total Amount Due", key: "totalDue", width: 15 },
     { header: "Paid Amount", key: "paid", width: 15 },
-    { header: "Balance Amount", key: "balance", width: 15 },
+    { header: "Balance Amount", key: "balance", width: 13 },
     { header: "Payment Date", key: "payDate", width: 15 },
     { header: "Receipt Number", key: "receipt", width: 15 },
     { header: "Payment Due Date", key: "dueDate", width: 15 },
-    { header: "Remarks", key: "remarks", width: 20 },
+    { header: "Payment Remarks", key: "remarks", width: 20 },
+    { header: "Customer Notes", key: "customerNotes", width: 25 },
   ];
 
   // Style Header
@@ -934,8 +938,13 @@ service.closeMonth = async (userInfo, month, year) => {
 
     // ✅ FIXED: Create dates in IST timezone (UTC+5:30) to match how bills are stored
     // December 1st 2025 00:00 IST = November 30th 2025 18:30 UTC
-    const monthStart = new Date(Date.UTC(targetYear, targetMonth, 1, 0, 0, 0, 0) - (5.5 * 60 * 60 * 1000));
-    const monthEnd = new Date(Date.UTC(targetYear, targetMonth + 1, 0, 23, 59, 59, 999) - (5.5 * 60 * 60 * 1000));
+    const monthStart = new Date(
+      Date.UTC(targetYear, targetMonth, 1, 0, 0, 0, 0) - 5.5 * 60 * 60 * 1000,
+    );
+    const monthEnd = new Date(
+      Date.UTC(targetYear, targetMonth + 1, 0, 23, 59, 59, 999) -
+        5.5 * 60 * 60 * 1000,
+    );
 
     console.log("\n📅 Date Range Calculation:");
     console.log(
@@ -1411,6 +1420,7 @@ service.monthlyStatement = async (userInfo, query) => {
           : "-", // Only for completed payments
       dueDate: moment(item.createdAt).endOf("month").format("DD-MM-YYYY"),
       remarks: item.notes || "-",
+      customerNotes: item.customer?.notes || "-",
 
       // Metadata
       buildingName: item.building?.name || "Unknown Building",
@@ -1467,11 +1477,12 @@ service.monthlyStatement = async (userInfo, query) => {
     { header: "Prev. Payment Due", key: "prevDue", width: 15 },
     { header: "Total Amount Due", key: "totalDue", width: 15 },
     { header: "Paid Amount", key: "paid", width: 15 },
-    { header: "Balance Amount", key: "balance", width: 15 },
+    { header: "Balance Amount", key: "balance", width: 13 },
     { header: "Payment Date", key: "payDate", width: 15 },
     { header: "Receipt Number", key: "receipt", width: 15 },
     { header: "Payment Due Date", key: "dueDate", width: 15 },
-    { header: "Remarks", key: "remarks", width: 20 },
+    { header: "Payment Remarks", key: "remarks", width: 20 },
+    { header: "Customer Notes", key: "customerNotes", width: 25 },
   ];
 
   const headerRow = sheet.getRow(1);
@@ -1582,6 +1593,7 @@ service.generatePDF = async (userInfo, filters) => {
         const vehicleReg = payment.vehicle?.registration_no || "-";
         const parkingNo = payment.vehicle?.parking_no || "-";
         const billDate = moment(payment.createdAt).format("DD/MM/YYYY");
+        const customerNotes = payment.customer?.notes || "-"; // Customer Notes
 
         // Extract carried forward amount from notes
         let carriedAmount = "-";
@@ -1617,6 +1629,7 @@ service.generatePDF = async (userInfo, filters) => {
           String(payment.balance || 0),
           paidDate,
           (payment.status || "pending").toUpperCase(),
+          customerNotes, // Add customer notes as last column
         ];
       });
 
@@ -1636,6 +1649,7 @@ service.generatePDF = async (userInfo, filters) => {
           "Balance",
           "Paid Date",
           "Status",
+          "Customer Notes",
         ],
         rows: tableRows,
       };

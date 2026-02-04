@@ -7,18 +7,6 @@ const CounterService = require("../../server/utils/counters");
 const cron = module.exports;
 
 cron.run = async (targetDate = null) => {
-  // FIX: Added $ne: "" to filter out invalid empty strings that cause CastError
-  let customers = JSON.parse(
-    JSON.stringify(
-      await CustomersModel.find({
-        isDeleted: false,
-        building: { $exists: true, $ne: "" },
-      })
-        .populate("building")
-        .lean(),
-    ),
-  );
-
   // If targetDate is provided, use it; otherwise default to tomorrow
   let tomorrowDate = targetDate
     ? moment.tz(targetDate, "Asia/Dubai").startOf("day")
@@ -34,6 +22,45 @@ cron.run = async (targetDate = null) => {
     "for the date",
     tomorrowDate.format("YYYY-MM-DD"),
     targetDate ? "(Manual Trigger)" : "(Auto Cron)",
+  );
+
+  // ✅ CHECK IF JOBS ALREADY EXIST FOR THIS DATE
+  const startOfDay = new Date(tomorrowDate);
+  const endOfDay = new Date(tomorrowDate);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  const existingJobsCount = await JobsModel.countDocuments({
+    assignedDate: {
+      $gte: startOfDay,
+      $lte: endOfDay,
+    },
+    isDeleted: { $ne: true }, // Don't count deleted jobs
+  });
+
+  if (existingJobsCount > 0) {
+    console.log(
+      `⚠️ Jobs already exist for ${tomorrowDate.format("YYYY-MM-DD")}. Found ${existingJobsCount} existing jobs. Skipping job creation.`,
+    );
+    return {
+      jobsGenerated: 0,
+      targetDate: tomorrowDate.format("YYYY-MM-DD"),
+      runTime: moment().tz("Asia/Dubai").format(),
+      skipped: true,
+      reason: `${existingJobsCount} jobs already exist for this date`,
+      existingJobs: existingJobsCount,
+    };
+  }
+
+  // FIX: Added $ne: "" to filter out invalid empty strings that cause CastError
+  let customers = JSON.parse(
+    JSON.stringify(
+      await CustomersModel.find({
+        isDeleted: false,
+        building: { $exists: true, $ne: "" },
+      })
+        .populate("building")
+        .lean(),
+    ),
   );
 
   const jobs = [];
