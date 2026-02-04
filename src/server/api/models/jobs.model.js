@@ -16,7 +16,7 @@ const schema = new mongoose.Schema(
     building: { type: String, ref: "buildings" },
     locationMap: { type: Object },
     status: { type: String, default: "pending" },
-    rejectionReason: { type: String }, // Reason for rejection when status is cancelled
+    rejectionReason: { type: String }, // Reason for rejection when status is rejected
 
     // ✅ ADD THESE FIELDS
     tips: { type: Number, default: 0 }, // Required for One Wash Tips report

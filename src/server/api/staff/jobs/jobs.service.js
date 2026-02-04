@@ -276,7 +276,9 @@ service.createJob = async (customer, createdBy = "Cron Scheduler") => {
           immediate: true,
         });
       } else {
-        console.log(`⏭️ [CREATE JOB] Skipping daily vehicle ${vehicle.registration_no} - Sunday excluded`);
+        console.log(
+          `⏭️ [CREATE JOB] Skipping daily vehicle ${vehicle.registration_no} - Sunday excluded`,
+        );
       }
     }
 

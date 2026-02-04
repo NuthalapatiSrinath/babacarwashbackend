@@ -56,7 +56,7 @@ service.list = async (userInfo, rawQuery) => {
 
     ...(query.startDate && !isNaN(new Date(query.startDate).getTime())
       ? {
-          createdAt: {
+          assignedDate: {
             $gte: new Date(query.startDate),
             $lte: (() => {
               let end = query.endDate
