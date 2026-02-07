@@ -127,15 +127,11 @@ cron.run = async (targetDate = null) => {
       let assignedDate;
       let assignedDateMoment; // Keep moment version for day checking
 
-      // For manual runs, always use the target date
-      // For auto runs, respect the schedule_today flag
-      if (!isManualRun && iterator.building.schedule_today) {
-        assignedDateMoment = todayData.clone();
-        assignedDate = todayData.toDate();
-      } else {
-        assignedDateMoment = tomorrowDate.clone();
-        assignedDate = tomorrowDate.toDate();
-      }
+      // FIXED: Always use tomorrow's date (target date) for scheduling
+      // The schedule_today flag should only control the 'immediate' flag, not the assigned date
+      // This ensures consistency between manual and auto schedulers
+      assignedDateMoment = tomorrowDate.clone();
+      assignedDate = tomorrowDate.toDate();
 
       if (vehicle.schedule_type == "daily") {
         // Skip Sunday (0 = Sunday) for daily schedules
