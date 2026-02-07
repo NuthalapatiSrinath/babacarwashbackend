@@ -9,38 +9,107 @@ const AuthHelper = require("../auth/auth.helper");
 const service = module.exports;
 
 service.list = async (userInfo, query) => {
+  // Workers' shift: 18:30 to 18:30 next day (Dubai time)
+  // If current time is before 18:30 → show yesterday 18:30 to today 18:30
+  // If current time is after 18:30 → show today 18:30 to tomorrow 18:30
+
+  const now = moment().tz("Asia/Dubai");
+  const currentHour = now.hours();
+  const currentMinute = now.minutes();
+
+  let startTime, endTime;
+
+  // Check if current time is before or after 18:30
+  if (currentHour < 18 || (currentHour === 18 && currentMinute < 30)) {
+    // Before 18:30 → show yesterday 18:30 to today 18:30
+    startTime = moment()
+      .tz("Asia/Dubai")
+      .subtract(1, "day")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+    endTime = moment()
+      .tz("Asia/Dubai")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+  } else {
+    // After 18:30 → show today 18:30 to tomorrow 18:30
+    startTime = moment()
+      .tz("Asia/Dubai")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+    endTime = moment()
+      .tz("Asia/Dubai")
+      .add(1, "day")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+  }
+
+  console.log(
+    "📋 [STAFF JOBS LIST] ==========================================",
+  );
+  console.log("📋 Worker ID:", userInfo._id);
+  console.log("📋 Current Dubai Time:", now.format("YYYY-MM-DD HH:mm:ss"));
+  console.log(
+    "📋 Shift Window: ",
+    startTime.format("YYYY-MM-DD HH:mm"),
+    "→",
+    endTime.format("YYYY-MM-DD HH:mm"),
+  );
+  console.log("📋 Query Status:", query.status || "pending (default)");
+
+  // Base query for current shift (used for pending/completed counts)
+  const currentShiftQuery = {
+    worker: userInfo._id,
+    isDeleted: false,
+    assignedDate: {
+      $gte: startTime.toDate(),
+      $lte: endTime.toDate(),
+    },
+  };
+
+  // Query for displaying data (deep copy to avoid modifying currentShiftQuery)
   const findQuery = {
     worker: userInfo._id,
     isDeleted: false,
-    $or: [
-      {
-        assignedDate: {
-          $gte: moment().add(1, "day").tz("Asia/Dubai").startOf("day").format(),
-          $lte: moment().add(1, "day").tz("Asia/Dubai").endOf("day").format(),
-        },
-      },
-      {
-        immediate: true,
-        assignedDate: {
-          $gte: moment().tz("Asia/Dubai").startOf("day").format(),
-          $lte: moment().tz("Asia/Dubai").endOf("day").format(),
-        },
-      },
-    ],
+    assignedDate: {
+      $gte: startTime.toDate(),
+      $lte: endTime.toDate(),
+    },
     ...(query.status ? { status: query.status } : { status: "pending" }),
   };
 
+  console.log("📋 Find Query:", JSON.stringify(findQuery, null, 2));
+
+  // Debug: Check ALL jobs for this worker to see what's in DB
+  const allWorkerJobs = await JobsModel.find({
+    worker: userInfo._id,
+    isDeleted: false,
+  })
+    .select("assignedDate status immediate createdBy")
+    .limit(10)
+    .lean();
+
+  console.log("📋 Sample jobs for this worker (up to 10):");
+  allWorkerJobs.forEach((job) => {
+    console.log(
+      `   - ${job._id}: ${moment(job.assignedDate).tz("Asia/Dubai").format("YYYY-MM-DD HH:mm:ss")} | Status: ${job.status} | Immediate: ${job.immediate} | By: ${job.createdBy}`,
+    );
+  });
+
+  // For rejected tab, extend date range to last 7 days
   if (query.status == "rejected") {
-    findQuery.$or[0].assignedDate.$gte = moment()
-      .subtract(7, "day")
-      .tz("Asia/Dubai")
-      .startOf("day")
-      .format();
-    findQuery.$or[1].assignedDate.$gte = moment()
-      .subtract(7, "day")
-      .tz("Asia/Dubai")
-      .startOf("day")
-      .format();
+    findQuery.assignedDate.$gte = startTime
+      .clone()
+      .subtract(7, "days")
+      .toDate();
   }
 
   if (query.search) {
@@ -63,25 +132,33 @@ service.list = async (userInfo, query) => {
     }
   }
 
-  const rejectedQuery = JSON.parse(JSON.stringify(findQuery));
-  rejectedQuery.$or[0].assignedDate.$gte = moment()
-    .subtract(7, "day")
-    .tz("Asia/Dubai")
-    .startOf("day")
-    .format();
-  rejectedQuery.$or[1].assignedDate.$gte = moment()
-    .subtract(7, "day")
-    .tz("Asia/Dubai")
-    .startOf("day")
-    .format();
+  // Rejected query: extend date range to last 7 days for rejected count
+  const rejectedQuery = {
+    worker: userInfo._id,
+    isDeleted: false,
+    assignedDate: {
+      $gte: startTime.clone().subtract(7, "days").toDate(),
+      $lte: endTime.toDate(),
+    },
+  };
 
+  console.log(
+    "📋 Current Shift Query (for pending/completed):",
+    JSON.stringify(currentShiftQuery, null, 2),
+  );
+  console.log(
+    "📋 Rejected Query (7 days):",
+    JSON.stringify(rejectedQuery, null, 2),
+  );
+
+  // Counts: Pending/Completed use current shift, Rejected uses 7-day range
   const counts = {
     pending: await JobsModel.countDocuments({
-      ...findQuery,
+      ...currentShiftQuery,
       status: "pending",
     }),
     completed: await JobsModel.countDocuments({
-      ...findQuery,
+      ...currentShiftQuery,
       status: "completed",
     }),
     rejected: await JobsModel.countDocuments({
@@ -89,6 +166,15 @@ service.list = async (userInfo, query) => {
       status: "rejected",
     }),
   };
+
+  console.log(
+    "📋 Counts - Pending:",
+    counts.pending,
+    "| Completed:",
+    counts.completed,
+    "| Rejected:",
+    counts.rejected,
+  );
 
   const total = await JobsModel.countDocuments(findQuery);
   const data = await JobsModel.find(findQuery)
@@ -99,6 +185,15 @@ service.list = async (userInfo, query) => {
       { path: "building", model: "buildings" },
     ])
     .lean();
+
+  console.log("📋 Counts:", counts);
+  console.log("📋 Total Jobs Found:", total);
+  console.log("📋 Data Length:", data.length);
+  if (data.length > 0) {
+    console.log("📋 First Job Sample:", JSON.stringify(data[0], null, 2));
+  } else {
+    console.log("📋 ❌ NO JOBS FOUND!");
+  }
 
   const jobsMap = {};
 
@@ -136,6 +231,12 @@ service.list = async (userInfo, query) => {
       service_type: jobsMap[key].service_type,
     });
   }
+
+  console.log("📋 Final Result - jobsDataMap length:", jobsDataMap.length);
+  console.log("📋 Final Result - buildings:", buildings.length);
+  console.log(
+    "📋 [STAFF JOBS LIST] END ==========================================",
+  );
 
   return { total, data: jobsDataMap, counts, buildings };
 };

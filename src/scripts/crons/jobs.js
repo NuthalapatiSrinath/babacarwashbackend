@@ -11,7 +11,12 @@ cron.run = async (targetDate = null) => {
   let tomorrowDate = targetDate
     ? moment.tz(targetDate, "Asia/Dubai").startOf("day")
     : moment().tz("Asia/Dubai").startOf("day").add(1, "day");
-  let todayData = moment().tz("Asia/Dubai").startOf("day").tz("Asia/Dubai");
+
+  // For manual runs, todayData should be relative to targetDate (day before target)
+  // For auto runs, todayData is the actual current day
+  let todayData = targetDate
+    ? moment.tz(targetDate, "Asia/Dubai").startOf("day").subtract(1, "day")
+    : moment().tz("Asia/Dubai").startOf("day").tz("Asia/Dubai");
 
   // Determine if this is a manual run
   const isManualRun = !!targetDate;
@@ -23,6 +28,24 @@ cron.run = async (targetDate = null) => {
     tomorrowDate.format("YYYY-MM-DD"),
     targetDate ? "(Manual Trigger)" : "(Auto Cron)",
   );
+
+  // Check if target date is Sunday - if so, only create weekly jobs, skip dailies
+  const targetDayOfWeek = tomorrowDate.day();
+  const isSunday = targetDayOfWeek === 0;
+
+  console.log(`\n========================================`);
+  console.log(`📅 TARGET DATE: ${tomorrowDate.format("YYYY-MM-DD dddd")}`);
+  console.log(
+    `📅 DAY OF WEEK: ${targetDayOfWeek} (${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][targetDayOfWeek]})`,
+  );
+  console.log(`📅 IS SUNDAY: ${isSunday}`);
+  console.log(`========================================\n`);
+
+  if (isSunday) {
+    console.log(
+      `⚠️⚠️⚠️ Target date ${tomorrowDate.format("YYYY-MM-DD")} is SUNDAY - Daily jobs will be skipped! ⚠️⚠️⚠️\n`,
+    );
+  }
 
   // ✅ CHECK IF JOBS ALREADY EXIST FOR THIS DATE
   const startOfDay = new Date(tomorrowDate);
@@ -66,6 +89,11 @@ cron.run = async (targetDate = null) => {
   const jobs = [];
   const scheduleId = await CounterService.id("scheduler");
 
+  let dailyJobsCreated = 0;
+  let dailyJobsSkipped = 0;
+  let weeklyJobsCreated = 0;
+  let weeklyJobsSkipped = 0;
+
   for (const iterator of customers) {
     // Safety check: if population failed (building is null), skip this customer
     if (!iterator.building) {
@@ -95,16 +123,41 @@ cron.run = async (targetDate = null) => {
         continue;
       }
 
-      let assignedDate = new Date(tomorrowDate);
+      // Determine the assigned date
+      let assignedDate;
+      let assignedDateMoment; // Keep moment version for day checking
 
-      if (iterator.building.schedule_today) {
-        assignedDate = new Date(todayData);
+      // For manual runs, always use the target date
+      // For auto runs, respect the schedule_today flag
+      if (!isManualRun && iterator.building.schedule_today) {
+        assignedDateMoment = todayData.clone();
+        assignedDate = todayData.toDate();
+      } else {
+        assignedDateMoment = tomorrowDate.clone();
+        assignedDate = tomorrowDate.toDate();
       }
 
       if (vehicle.schedule_type == "daily") {
+        // Skip Sunday (0 = Sunday) for daily schedules
+        // IMPORTANT: Check day on moment object directly (preserves timezone)
+        const assignedDay = assignedDateMoment.day();
+
+        console.log(
+          `🔍 [DAILY CHECK] Vehicle ${vehicle._id}: Date=${assignedDateMoment.format("YYYY-MM-DD")}, Day=${assignedDay} (${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][assignedDay]})`,
+        );
+
+        if (assignedDay === 0) {
+          console.log(
+            `⏭️ [SKIP SUNDAY] Vehicle ${vehicle._id} - Daily schedule, Sunday excluded`,
+          );
+          dailyJobsSkipped++;
+          continue;
+        }
+
         console.log(
           `✅ Daily schedule for vehicle ${vehicle._id} (Customer: ${iterator.name})`,
         );
+        dailyJobsCreated++;
         jobs.push({
           scheduleId,
           vehicle: vehicle._id,
@@ -114,14 +167,15 @@ cron.run = async (targetDate = null) => {
           location: iterator.location,
           building: iterator.building._id,
           createdBy: isManualRun ? "Manual Scheduler" : "Cron Scheduler",
-          ...(iterator.building.schedule_today ? { immediate: true } : null),
+          ...(!isManualRun && iterator.building.schedule_today
+            ? { immediate: true }
+            : null),
         });
       }
 
       if (vehicle.schedule_type == "weekly") {
-        const targetDay = iterator.building.schedule_today
-          ? todayData.get("day")
-          : tomorrowDate.get("day");
+        // IMPORTANT: Check day on moment object directly (preserves timezone)
+        const targetDay = assignedDateMoment.day();
 
         // Map day numbers to day names
         const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -131,7 +185,7 @@ cron.run = async (targetDate = null) => {
           `📅 Checking weekly schedule for vehicle ${vehicle._id} (Customer: ${iterator.name})`,
         );
         console.log(
-          `   Target day: ${targetDay} (${tomorrowDate.format("dddd")}) - ${targetDayName}`,
+          `   Target date: ${assignedDateMoment.format("YYYY-MM-DD dddd")}, day=${targetDay} (${targetDayName})`,
         );
         console.log(`   Schedule days exists:`, !!vehicle.schedule_days);
         console.log(`   Schedule days:`, JSON.stringify(vehicle.schedule_days));
@@ -176,6 +230,7 @@ cron.run = async (targetDate = null) => {
 
         if (isMatchFound) {
           console.log(`✅ Weekly schedule matched for vehicle ${vehicle._id}`);
+          weeklyJobsCreated++;
           jobs.push({
             scheduleId,
             vehicle: vehicle._id,
@@ -185,14 +240,27 @@ cron.run = async (targetDate = null) => {
             location: iterator.location,
             building: iterator.building._id,
             createdBy: isManualRun ? "Manual Scheduler" : "Cron Scheduler",
-            ...(iterator.building.schedule_today ? { immediate: true } : null),
+            ...(!isManualRun && iterator.building.schedule_today
+              ? { immediate: true }
+              : null),
           });
         } else {
           console.log(`   ❌ No matching day found for vehicle ${vehicle._id}`);
+          weeklyJobsSkipped++;
         }
       }
     }
   }
+
+  console.log(`\n========================================`);
+  console.log(`📊 JOB CREATION SUMMARY`);
+  console.log(`========================================`);
+  console.log(`Daily Jobs Created: ${dailyJobsCreated}`);
+  console.log(`Daily Jobs Skipped (Sunday): ${dailyJobsSkipped}`);
+  console.log(`Weekly Jobs Created: ${weeklyJobsCreated}`);
+  console.log(`Weekly Jobs Skipped (No Match): ${weeklyJobsSkipped}`);
+  console.log(`Total Jobs: ${jobs.length}`);
+  console.log(`========================================\n`);
 
   if (jobs.length > 0) {
     await JobsModel.insertMany(jobs);
