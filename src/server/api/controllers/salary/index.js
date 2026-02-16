@@ -1,60 +1,82 @@
 const router = require("express").Router();
 const controller = require("./salary.controller");
 const settingsController = require("./salary-settings.controller");
+
+// FIXED PATH: Go up one level (..) to 'controllers', then into 'auth'
 const AuthHelper = require("../auth/auth.helper");
 
 // ============== SALARY SLIP ROUTES ==============
-// Get a slip (fetches existing or calculates preview)
-// GET /api/salary/slip?workerId=...&month=10&year=2025
+
+/**
+ * GET /api/salary/slip
+ * Fetch a salary slip.
+ * Query Params: ?workerId=...&month=0&year=2025
+ */
 router.get("/slip", AuthHelper.authenticate, controller.getSalarySlip);
 
-// Save or update a slip with manual inputs
-// POST /api/salary/slip
+/**
+ * POST /api/salary/slip
+ * Save or finalize a salary slip with manual inputs.
+ * Body: { workerId, month, year, manualInputs: {...} }
+ */
 router.post("/slip", AuthHelper.authenticate, controller.saveSalarySlip);
 
 // ============== SALARY SETTINGS ROUTES ==============
-// Get all salary settings
-// GET /api/salary/settings
+
+/**
+ * GET /api/salary/settings
+ * Get the current active configuration.
+ */
 router.get(
   "/settings",
   AuthHelper.authenticate,
   settingsController.getSettings,
 );
 
-// Save/Update salary settings
-// POST /api/salary/settings
+/**
+ * POST /api/salary/settings
+ * Update all settings at once.
+ */
 router.post(
   "/settings",
   AuthHelper.authenticate,
   settingsController.saveSettings,
 );
 
-// Get specific category settings
-// GET /api/salary/settings/:category
+/**
+ * GET /api/salary/settings/:category
+ * Get a specific section (e.g., 'carWash', 'mall').
+ */
 router.get(
   "/settings/:category",
   AuthHelper.authenticate,
   settingsController.getCategorySettings,
 );
 
-// Update specific category
-// PATCH /api/salary/settings/:category
+/**
+ * PATCH /api/salary/settings/:category
+ * Update a specific section.
+ */
 router.patch(
   "/settings/:category",
   AuthHelper.authenticate,
   settingsController.updateCategory,
 );
 
-// Reset to default values
-// POST /api/salary/settings/reset
+/**
+ * POST /api/salary/settings/reset
+ * Restore default values from the system.
+ */
 router.post(
   "/settings/reset",
   AuthHelper.authenticate,
   settingsController.resetToDefaults,
 );
 
-// Calculate salary based on employee type
-// POST /api/salary/calculate
+/**
+ * POST /api/salary/calculate
+ * Utility route for the frontend calculator to preview earnings without saving.
+ */
 router.post(
   "/calculate",
   AuthHelper.authenticate,

@@ -1,41 +1,53 @@
 /**
  * Seed Script: Initialize Default Salary Settings
- *
- * This script creates the default salary configuration in the database
- * Run: node src/scripts/seed-salary-settings.js
+ * * This script creates the default salary configuration in the database
+ * matching the new nested schema structure.
+ * * Run: node src/scripts/seed-salary-settings.js
  */
 
 const mongoose = require("mongoose");
 require("dotenv").config();
 
+// Ensure path matches your project structure
 const SalarySettings = require("../server/api/models/salary-settings.model");
 
 const defaultSettings = {
-  carWashDayDuty: {
-    applicableBuildings: ["Ubora Towers", "Marina Plaza"],
-    ratePerCar: 1.4,
-    incentiveLessThan1000: 100,
-    incentiveMoreThan1000: 200,
+  // 1. Car Wash (Residential)
+  carWash: {
+    dayDuty: {
+      applicableBuildings: ["Ubora Towers", "Marina Plaza"],
+      ratePerCar: 1.4,
+      incentiveThreshold: 1000,
+      incentiveLow: 100,
+      incentiveHigh: 200,
+    },
+    nightDuty: {
+      ratePerCar: 1.35,
+      incentiveThreshold: 1000,
+      incentiveLow: 100,
+      incentiveHigh: 200,
+    },
   },
-  carWashNightDuty: {
-    ratePerCar: 1.35,
-    incentiveLessThan1000: 100,
-    incentiveMoreThan1000: 200,
-  },
-  etisalatSim: {
-    monthlyBill: 52.5,
+
+  // 2. Etisalat Sim
+  etisalat: {
+    monthlyBillCap: 52.5,
     companyPays: 26.25,
-    employeeDeduction: 26.25,
+    employeeBaseDeduction: 26.25,
   },
-  mallEmployees: {
-    carWashRate: 3.0,
-    monthlyVehiclesRate: 1.35,
-    fixedExtraPayment: 200,
-    absentMoreThan1DayDeduction: 25,
+
+  // 3. Mall Employees
+  mall: {
+    oneWashRate: 3.0,
+    monthlyRate: 1.35,
+    fixedAllowance: 200,
+    absentDeduction: 25,
     sundayAbsentDeduction: 50,
-    sickLeavePayment: 13.33,
+    sickLeavePay: 13.33,
   },
-  constructionCamp: {
+
+  // 4. Construction / Camp
+  camp: {
     helper: {
       baseSalary: 1000,
       overtimeRate: 4.0,
@@ -44,16 +56,19 @@ const defaultSettings = {
       baseSalary: 1200,
       overtimeRate: 4.5,
     },
-    standardWorkingDays: 30,
-    normalWorkingHours: 8,
-    actualWorkingHours: 10,
-    noDutyPayment: 18.33,
-    holidayPayment: 18.33,
-    sickLeavePayment: 13.33,
-    absentDeduction: 25,
-    monthlyIncentive: 100,
+    settings: {
+      standardDays: 30,
+      normalHours: 8,
+      actualHours: 10,
+      noDutyPay: 18.33,
+      holidayPay: 18.33,
+      sickLeavePay: 13.33,
+      monthlyIncentive: 100,
+    },
   },
-  outsideCamp: {
+
+  // 5. Outside Camp (Hourly)
+  outside: {
     helper: 5.0,
     carpenter: 5.5,
     steelFixer: 5.5,
@@ -63,6 +78,7 @@ const defaultSettings = {
     electrician: 6.0,
     plumber: 6.0,
   },
+
   isActive: true,
   lastModifiedBy: "System Seed",
 };
@@ -84,10 +100,9 @@ async function seedSalarySettings() {
       console.log("⚠️  Active salary settings already exist!");
       console.log("Settings ID:", existingSettings._id);
       console.log("\nOptions:");
-      console.log("1. Keep existing settings (no changes)");
-      console.log("2. Deactivate existing and create new defaults");
+      console.log("1. To keep existing settings: Do nothing.");
       console.log(
-        "\nTo force reset, manually delete or deactivate existing settings first.",
+        "2. To reset: Delete the 'salarysettings' collection in MongoDB Compass and run this script again.",
       );
 
       await mongoose.connection.close();
@@ -100,49 +115,28 @@ async function seedSalarySettings() {
     await settings.save();
 
     console.log("✅ Default salary settings created successfully!");
-    console.log("\nSettings Summary:");
-    console.log("==================");
+
+    // Validation Log
+    console.log("\nSettings Verification:");
+    console.log("======================");
     console.log(
-      "Car Wash Day Duty Rate:",
-      settings.carWashDayDuty.ratePerCar,
+      "Car Wash Day Rate:",
+      settings.carWash.dayDuty.ratePerCar,
       "AED",
     );
-    console.log(
-      "Car Wash Night Duty Rate:",
-      settings.carWashNightDuty.ratePerCar,
-      "AED",
-    );
-    console.log(
-      "Mall Car Wash Rate:",
-      settings.mallEmployees.carWashRate,
-      "AED",
-    );
-    console.log(
-      "Construction Helper Salary:",
-      settings.constructionCamp.helper.baseSalary,
-      "AED",
-    );
-    console.log(
-      "Construction Mason Salary:",
-      settings.constructionCamp.mason.baseSalary,
-      "AED",
-    );
-    console.log(
-      "Outside Camp Helper Rate:",
-      settings.outsideCamp.helper,
-      "AED/hour",
-    );
-    console.log("\nSettings ID:", settings._id);
-    console.log("==================");
+    console.log("Mall One Wash Rate:", settings.mall.oneWashRate, "AED");
+    console.log("Camp Helper Salary:", settings.camp.helper.baseSalary, "AED");
+    console.log("Camp OT Rate:", settings.camp.helper.overtimeRate, "AED/hr");
+    console.log("Outside Mason Rate:", settings.outside.mason, "AED/hr");
+    console.log("======================");
 
     await mongoose.connection.close();
     console.log("\n✅ Database connection closed");
-    console.log("✅ Seed completed successfully!");
+    process.exit(0);
   } catch (error) {
     console.error("❌ Error seeding salary settings:", error);
     process.exit(1);
   }
 }
 
-// Run the seed function
 seedSalarySettings();

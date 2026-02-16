@@ -20,11 +20,16 @@ exports.getSettings = async (req, res) => {
  */
 exports.saveSettings = async (req, res) => {
   try {
-    const adminName = `${req.user.firstName} ${req.user.lastName}`;
+    // Safely get admin name, fallback to 'Admin' if auth middleware didn't populate user
+    const adminName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Admin";
+
     const settings = await SalarySettingsService.updateSettings(
       req.body,
       adminName,
     );
+
     return res.status(200).json({
       message: "Settings saved successfully",
       data: settings,
@@ -57,12 +62,16 @@ exports.getCategorySettings = async (req, res) => {
 exports.updateCategory = async (req, res) => {
   try {
     const { category } = req.params;
-    const adminName = `${req.user.firstName} ${req.user.lastName}`;
+    const adminName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Admin";
+
     const settings = await SalarySettingsService.updateCategory(
       category,
       req.body,
       adminName,
     );
+
     return res.status(200).json({
       message: `${category} updated successfully`,
       data: settings,
@@ -79,8 +88,12 @@ exports.updateCategory = async (req, res) => {
  */
 exports.resetToDefaults = async (req, res) => {
   try {
-    const adminName = `${req.user.firstName} ${req.user.lastName}`;
+    const adminName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Admin";
+
     const settings = await SalarySettingsService.resetToDefaults(adminName);
+
     return res.status(200).json({
       message: "Settings reset to defaults successfully",
       data: settings,
@@ -94,6 +107,7 @@ exports.resetToDefaults = async (req, res) => {
 /**
  * POST /api/salary/calculate
  * Calculate salary based on employee type and data
+ * Used for live previews/calculators
  */
 exports.calculateSalary = async (req, res) => {
   try {

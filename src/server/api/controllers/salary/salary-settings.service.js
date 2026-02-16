@@ -1,15 +1,21 @@
+"use strict";
+
 const SalarySettings = require("../../models/salary-settings.model");
+
+const service = {};
 
 /**
  * Get salary settings (always returns active configuration)
  */
-exports.getSettings = async () => {
+service.getSettings = async () => {
   try {
-    let settings = await SalarySettings.findOne({ isActive: true }).lean();
+    let settings = await SalarySettings.findOne({ isActive: true })
+      .sort({ createdAt: -1 })
+      .lean();
 
     // If no settings exist, create default
     if (!settings) {
-      settings = await createDefaultSettings();
+      settings = await service.createDefaultSettings();
     }
 
     return settings;
@@ -21,20 +27,26 @@ exports.getSettings = async () => {
 
 /**
  * Update salary settings
+ * We create a NEW record with isActive: true and set old ones to false
+ * This preserves history.
  */
-exports.updateSettings = async (data, adminName) => {
+service.updateSettings = async (data, adminName) => {
   try {
-    let settings = await SalarySettings.findOne({ isActive: true });
+    // 1. Deactivate current settings
+    await SalarySettings.updateMany({}, { isActive: false });
 
-    if (!settings) {
-      // Create new if doesn't exist
-      settings = new SalarySettings(data);
-    } else {
-      // Update existing
-      Object.assign(settings, data);
-    }
+    // 2. Prepare new data (ensure structure matches model)
+    // ⚠️ CRITICAL: Remove _id to prevent duplicate key error
+    const { _id, __v, createdAt, updatedAt, ...cleanData } = data;
 
-    settings.lastModifiedBy = adminName;
+    const newSettingsData = {
+      ...cleanData,
+      isActive: true,
+      lastModifiedBy: adminName,
+    };
+
+    // 3. Save new settings
+    const settings = new SalarySettings(newSettingsData);
     await settings.save();
 
     return settings;
@@ -47,25 +59,25 @@ exports.updateSettings = async (data, adminName) => {
 /**
  * Update specific category in salary settings
  */
-exports.updateCategory = async (category, data, adminName) => {
+service.updateCategory = async (category, data, adminName) => {
   try {
-    let settings = await SalarySettings.findOne({ isActive: true });
+    const currentSettings = await SalarySettings.findOne({
+      isActive: true,
+    }).lean();
 
-    if (!settings) {
-      settings = await createDefaultSettings();
+    // If no settings, create defaults first
+    let baseData =
+      currentSettings || (await service.createDefaultSettings()).toObject();
+
+    // Merge the specific category data
+    if (baseData[category]) {
+      baseData[category] = { ...baseData[category], ...data };
+    } else {
+      baseData[category] = data;
     }
 
-    // Validate category exists
-    if (!settings[category]) {
-      throw new Error(`Invalid category: ${category}`);
-    }
-
-    // Update the specific category
-    settings[category] = { ...settings[category], ...data };
-    settings.lastModifiedBy = adminName;
-    await settings.save();
-
-    return settings;
+    // Use the main update function to save as a new version
+    return await service.updateSettings(baseData, adminName);
   } catch (error) {
     console.error(`Error updating category ${category}:`, error);
     throw new Error(`Failed to update ${category}`);
@@ -75,17 +87,13 @@ exports.updateCategory = async (category, data, adminName) => {
 /**
  * Get specific category settings
  */
-exports.getCategorySettings = async (category) => {
+service.getCategorySettings = async (category) => {
   try {
-    const settings = await SalarySettings.findOne({ isActive: true }).lean();
-
-    if (!settings) {
-      const defaultSettings = await createDefaultSettings();
-      return defaultSettings[category];
-    }
+    const settings = await service.getSettings();
 
     if (!settings[category]) {
-      throw new Error(`Invalid category: ${category}`);
+      // Return empty object if category doesn't exist yet to prevent crash
+      return {};
     }
 
     return settings[category];
@@ -98,13 +106,15 @@ exports.getCategorySettings = async (category) => {
 /**
  * Reset to default values
  */
-exports.resetToDefaults = async (adminName) => {
+service.resetToDefaults = async (adminName) => {
   try {
-    // Deactivate current settings
+    // Deactivate all
     await SalarySettings.updateMany({}, { isActive: false });
 
-    // Create new default settings
-    const settings = await createDefaultSettings();
+    // Create fresh defaults
+    const settings = await service.createDefaultSettings();
+
+    // Update modified by
     settings.lastModifiedBy = adminName;
     await settings.save();
 
@@ -116,35 +126,39 @@ exports.resetToDefaults = async (adminName) => {
 };
 
 /**
- * Helper: Create default settings
+ * Helper: Create default settings based on your Document
  */
-async function createDefaultSettings() {
+service.createDefaultSettings = async () => {
   const defaultSettings = new SalarySettings({
-    carWashDayDuty: {
-      applicableBuildings: ["Ubora Towers", "Marina Plaza"],
-      ratePerCar: 1.4,
-      incentiveLessThan1000: 100,
-      incentiveMoreThan1000: 200,
+    carWash: {
+      dayDuty: {
+        applicableBuildings: ["Ubora Towers", "Marina Plaza"],
+        ratePerCar: 1.4,
+        incentiveThreshold: 1000,
+        incentiveLow: 100,
+        incentiveHigh: 200,
+      },
+      nightDuty: {
+        ratePerCar: 1.35,
+        incentiveThreshold: 1000,
+        incentiveLow: 100,
+        incentiveHigh: 200,
+      },
     },
-    carWashNightDuty: {
-      ratePerCar: 1.35,
-      incentiveLessThan1000: 100,
-      incentiveMoreThan1000: 200,
-    },
-    etisalatSim: {
-      monthlyBill: 52.5,
+    etisalat: {
+      monthlyBillCap: 52.5,
       companyPays: 26.25,
-      employeeDeduction: 26.25,
+      employeeBaseDeduction: 26.25,
     },
-    mallEmployees: {
-      carWashRate: 3.0,
-      monthlyVehiclesRate: 1.35,
-      fixedExtraPayment: 200,
-      absentMoreThan1DayDeduction: 25,
+    mall: {
+      oneWashRate: 3.0,
+      monthlyRate: 1.35,
+      fixedAllowance: 200,
+      absentDeduction: 25,
       sundayAbsentDeduction: 50,
-      sickLeavePayment: 13.33,
+      sickLeavePay: 13.33,
     },
-    constructionCamp: {
+    camp: {
       helper: {
         baseSalary: 1000,
         overtimeRate: 4.0,
@@ -153,16 +167,17 @@ async function createDefaultSettings() {
         baseSalary: 1200,
         overtimeRate: 4.5,
       },
-      standardWorkingDays: 30,
-      normalWorkingHours: 8,
-      actualWorkingHours: 10,
-      noDutyPayment: 18.33,
-      holidayPayment: 18.33,
-      sickLeavePayment: 13.33,
-      absentDeduction: 25,
-      monthlyIncentive: 100,
+      settings: {
+        standardDays: 30,
+        normalHours: 8,
+        actualHours: 10,
+        noDutyPay: 18.33,
+        holidayPay: 18.33,
+        sickLeavePay: 13.33,
+        monthlyIncentive: 100,
+      },
     },
-    outsideCamp: {
+    outside: {
       helper: 5.0,
       carpenter: 5.5,
       steelFixer: 5.5,
@@ -172,20 +187,22 @@ async function createDefaultSettings() {
       electrician: 6.0,
       plumber: 6.0,
     },
+    slipTemplate: "template1",
     isActive: true,
     lastModifiedBy: "System",
   });
 
   await defaultSettings.save();
   return defaultSettings;
-}
+};
 
 /**
  * Calculate salary based on employee type and configuration
+ * Used for the "Calculator" feature in admin panel
  */
-exports.calculateSalary = async (employeeType, employeeData) => {
+service.calculateSalary = async (employeeType, employeeData) => {
   try {
-    const config = await exports.getSettings();
+    const config = await service.getSettings();
 
     let calculation = {
       basicSalary: 0,
@@ -196,129 +213,130 @@ exports.calculateSalary = async (employeeType, employeeData) => {
     };
 
     switch (employeeType) {
-      case "carWashDay": {
-        const rate = config.carWashDayDuty.ratePerCar;
-        calculation.basicSalary = employeeData.totalCars * rate;
-
-        if (employeeData.totalCars < 1000) {
-          calculation.extraPaymentIncentive =
-            config.carWashDayDuty.incentiveLessThan1000;
-        } else {
-          calculation.extraPaymentIncentive =
-            config.carWashDayDuty.incentiveMoreThan1000;
-        }
-
-        calculation.totalDebit =
-          calculation.basicSalary + calculation.extraPaymentIncentive;
-        calculation.breakdown = {
-          totalCars: employeeData.totalCars,
-          ratePerCar: rate,
-          incentive: calculation.extraPaymentIncentive,
-        };
-        break;
-      }
-
+      // Logic for Car Wash (Residential)
+      case "carWash":
+      case "carWashDay":
       case "carWashNight": {
-        const rate = config.carWashNightDuty.ratePerCar;
-        calculation.basicSalary = employeeData.totalCars * rate;
+        const location = employeeData.location || "";
+        const totalCars = Number(employeeData.totalCars) || 0;
 
-        if (employeeData.totalCars < 1000) {
-          calculation.extraPaymentIncentive =
-            config.carWashNightDuty.incentiveLessThan1000;
+        // Determine if Day Duty (Ubora/Marina) or Night Duty (Others)
+        const dayDutyBuildings =
+          config.carWash.dayDuty.applicableBuildings || [];
+        const isDayDuty = dayDutyBuildings.some((b) => location.includes(b));
+
+        const ruleSet = isDayDuty
+          ? config.carWash.dayDuty
+          : config.carWash.nightDuty;
+
+        // 1. Basic Pay
+        calculation.basicSalary = totalCars * ruleSet.ratePerCar;
+
+        // 2. Incentive
+        if (totalCars < ruleSet.incentiveThreshold) {
+          calculation.extraPaymentIncentive = ruleSet.incentiveLow;
         } else {
-          calculation.extraPaymentIncentive =
-            config.carWashNightDuty.incentiveMoreThan1000;
+          calculation.extraPaymentIncentive = ruleSet.incentiveHigh;
         }
 
         calculation.totalDebit =
           calculation.basicSalary + calculation.extraPaymentIncentive;
+
         calculation.breakdown = {
-          totalCars: employeeData.totalCars,
-          ratePerCar: rate,
+          type: isDayDuty
+            ? "Day Duty (Residential)"
+            : "Night Duty (Residential)",
+          totalCars,
+          rate: ruleSet.ratePerCar,
           incentive: calculation.extraPaymentIncentive,
         };
         break;
       }
 
+      // Logic for Mall
       case "mall": {
-        const carWashIncome =
-          employeeData.carWashCount * config.mallEmployees.carWashRate;
-        const monthlyVehiclesIncome =
-          employeeData.monthlyVehicles *
-          config.mallEmployees.monthlyVehiclesRate;
-        calculation.basicSalary = carWashIncome + monthlyVehiclesIncome;
+        const oneWashCount = Number(employeeData.carWashCount) || 0; // Direct washes
+        const monthlyCount = Number(employeeData.monthlyVehicles) || 0; // Subscription cars
+        const daysWorked = Number(employeeData.daysWorked) || 30;
 
-        // Calculate prorated extra payment
-        const daysWorked = employeeData.daysWorked || 30;
-        calculation.extraPaymentIncentive =
-          (config.mallEmployees.fixedExtraPayment / 30) * daysWorked;
+        // 1. Commission Pay
+        const washPay = oneWashCount * config.mall.oneWashRate;
+        const monthlyPay = monthlyCount * config.mall.monthlyRate;
+        calculation.basicSalary = washPay + monthlyPay;
+
+        // 2. Fixed Allowance (Pro-rated)
+        // Rule: 200 / 30 * Days Worked
+        const dailyAllowanceRate = config.mall.fixedAllowance / 30;
+        calculation.extraPaymentIncentive = dailyAllowanceRate * daysWorked;
 
         calculation.totalDebit =
           calculation.basicSalary + calculation.extraPaymentIncentive;
+
         calculation.breakdown = {
-          carWashCount: employeeData.carWashCount,
-          monthlyVehicles: employeeData.monthlyVehicles,
-          daysWorked: daysWorked,
-          carWashIncome: carWashIncome.toFixed(2),
-          monthlyVehiclesIncome: monthlyVehiclesIncome.toFixed(2),
-          extraPayment: calculation.extraPaymentIncentive.toFixed(2),
+          directWashes: oneWashCount,
+          directRate: config.mall.oneWashRate,
+          monthlyCars: monthlyCount,
+          monthlyRate: config.mall.monthlyRate,
+          allowance: calculation.extraPaymentIncentive.toFixed(2),
         };
         break;
       }
 
-      case "constructionCamp": {
-        const role = employeeData.role || "helper";
-        const roleConfig = config.constructionCamp[role];
-        const daysPresent = employeeData.daysPresent || 0;
+      // Logic for Camp (Construction)
+      case "constructionCamp":
+      case "camp": {
+        const role = employeeData.role || "helper"; // helper or mason
+        const roleConfig = config.camp[role] || config.camp.helper;
+        const settings = config.camp.settings;
 
-        // Basic salary
-        calculation.basicSalary =
-          (roleConfig.baseSalary /
-            config.constructionCamp.standardWorkingDays) *
-          daysPresent;
+        const daysPresent = Number(employeeData.daysPresent) || 0;
+        const otHours = Number(employeeData.otHours) || 0;
+        const absentDays = Number(employeeData.absentDays) || 0;
 
-        // Overtime
-        const overtimeHours =
-          config.constructionCamp.actualWorkingHours -
-          config.constructionCamp.normalWorkingHours;
-        calculation.extraWorkOt =
-          overtimeHours * roleConfig.overtimeRate * daysPresent;
+        // 1. Basic Salary (Pro-rated)
+        // Rule: Base / 30 * Present Days
+        const dailyBase = roleConfig.baseSalary / settings.standardDays;
+        calculation.basicSalary = dailyBase * daysPresent;
 
-        // Monthly incentive
-        if (
-          daysPresent >= config.constructionCamp.standardWorkingDays &&
-          employeeData.absentDays === 0
-        ) {
-          calculation.extraPaymentIncentive =
-            config.constructionCamp.monthlyIncentive;
+        // 2. Overtime
+        calculation.extraWorkOt = otHours * roleConfig.overtimeRate;
+
+        // 3. Monthly Incentive (Full Attendance)
+        if (daysPresent >= settings.standardDays && absentDays === 0) {
+          calculation.extraPaymentIncentive = settings.monthlyIncentive;
         }
 
         calculation.totalDebit =
           calculation.basicSalary +
           calculation.extraWorkOt +
           calculation.extraPaymentIncentive;
+
         calculation.breakdown = {
-          role: role,
+          role,
           baseSalary: roleConfig.baseSalary,
-          daysPresent: daysPresent,
-          overtimeHours: overtimeHours,
-          overtimeRate: roleConfig.overtimeRate,
+          dailyRate: dailyBase.toFixed(2),
+          daysPresent,
+          otHours,
+          otRate: roleConfig.overtimeRate,
           incentive: calculation.extraPaymentIncentive,
         };
         break;
       }
 
+      // Logic for Outside Camp
       case "outsideCamp": {
         const position = employeeData.position || "helper";
-        const hourlyRate = config.outsideCamp[position];
-        const totalHours = employeeData.totalHours || 0;
+        // Convert to lowercase to match keys if necessary, or ensure exact match
+        const hourlyRate = config.outside[position] || config.outside.helper;
+        const totalHours = Number(employeeData.totalHours) || 0;
 
         calculation.basicSalary = totalHours * hourlyRate;
         calculation.totalDebit = calculation.basicSalary;
+
         calculation.breakdown = {
-          position: position,
-          hourlyRate: hourlyRate,
-          totalHours: totalHours,
+          position,
+          hourlyRate,
+          totalHours,
         };
         break;
       }
@@ -327,9 +345,19 @@ exports.calculateSalary = async (employeeType, employeeData) => {
         throw new Error(`Unknown employee type: ${employeeType}`);
     }
 
+    // Formatting for UI
+    calculation.basicSalary = Number(calculation.basicSalary.toFixed(2));
+    calculation.extraWorkOt = Number(calculation.extraWorkOt.toFixed(2));
+    calculation.extraPaymentIncentive = Number(
+      calculation.extraPaymentIncentive.toFixed(2),
+    );
+    calculation.totalDebit = Number(calculation.totalDebit.toFixed(2));
+
     return calculation;
   } catch (error) {
     console.error("Error calculating salary:", error);
     throw new Error("Failed to calculate salary");
   }
 };
+
+module.exports = service;

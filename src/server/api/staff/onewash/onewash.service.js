@@ -248,7 +248,7 @@ service.getPricing = async (userInfo) => {
     } else {
       console.log(
         "⚠️ [BACKEND] WARNING: Mall worker has no mall assigned! Full userInfo:",
-        JSON.stringify(userInfo, null, 2)
+        JSON.stringify(userInfo, null, 2),
       );
     }
   }

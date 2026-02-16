@@ -3,6 +3,7 @@ const SalarySlipModel = require("../../models/SalarySlip.model");
 const WorkersModel = require("../../models/workers.model");
 const OnewashModel = require("../../models/onewash.model");
 const JobsModel = require("../../models/jobs.model");
+const SalarySettingsService = require("./salary-settings.service");
 
 const service = {};
 
@@ -19,156 +20,244 @@ service.calculateOrUpdateSlip = async (
   year,
   manualInputs = {},
 ) => {
-  // 1. Fetch Worker Details
+  // 1. Fetch Resources
   const worker = await WorkersModel.findById(workerId).lean();
   if (!worker) throw new Error("Worker not found");
 
-  // 2. Fetch Wash Data for the Month
-  const startDate = moment(new Date(year, month, 1)).startOf("month");
-  const endDate = moment(new Date(year, month, 1)).endOf("month");
+  const settings = await SalarySettingsService.getSettings();
+
+  // Date Range
+  const startDate = moment({ year, month }).startOf("month");
+  const endDate = moment({ year, month }).endOf("month");
   const daysInMonth = startDate.daysInMonth();
 
-  const [onewashData, jobsData] = await Promise.all([
-    OnewashModel.find({
-      worker: workerId,
-      isDeleted: false,
-      createdAt: { $gte: startDate, $lte: endDate },
-    })
-      .select("createdAt")
-      .lean(),
-    JobsModel.find({
-      worker: workerId,
-      isDeleted: false,
-      status: "completed",
-      completedDate: { $gte: startDate, $lte: endDate },
-    })
-      .select("completedDate")
-      .lean(),
-  ]);
+  // 2. Fetch Wash Data
+  // Onewash = Direct/One-time (Mall 3.00, Residential Day/Night)
+  const oneWashData = await OnewashModel.find({
+    worker: workerId,
+    isDeleted: false,
+    createdAt: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+  })
+    .select("createdAt")
+    .lean();
 
-  // Aggregate Daily Washes
+  // Jobs = Subscriptions (Mall 1.35, Residential Day/Night)
+  const jobsData = await JobsModel.find({
+    worker: workerId,
+    isDeleted: false,
+    status: "completed",
+    completedDate: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+  })
+    .select("completedDate")
+    .lean();
+
+  // Aggregate Daily Counts (for attendance/calendar view)
   const dailyCounts = {};
-  let totalWashes = 0;
-  let presentDaysCount = 0;
-
-  // Initialize all days to 0
   for (let i = 1; i <= daysInMonth; i++) dailyCounts[i.toString()] = 0;
 
-  const process = (job, dateField) => {
-    if (!job[dateField]) return;
-    const day = moment(job[dateField]).date().toString();
-    dailyCounts[day] = (dailyCounts[day] || 0) + 1;
-    totalWashes++;
+  let presentDaysCount = 0;
+  const processDates = (items, dateField) => {
+    items.forEach((item) => {
+      if (!item[dateField]) return;
+      const day = moment(item[dateField]).date().toString();
+      dailyCounts[day] = (dailyCounts[day] || 0) + 1;
+    });
   };
-  onewashData.forEach((j) => process(j, "createdAt"));
-  jobsData.forEach((j) => process(j, "completedDate"));
 
-  // Calculate Present Days
+  processDates(oneWashData, "createdAt");
+  processDates(jobsData, "completedDate");
+
+  // Calculate Present Days based on activity
   for (let i = 1; i <= daysInMonth; i++) {
     if (dailyCounts[i.toString()] > 0) presentDaysCount++;
   }
 
   // --- 3. Perform Financial Calculations ---
 
-  // Rule: Basic Salary only if washes >= 100
-  const BASIC_SALARY_STD = 550.0;
-  const basicSalary = totalWashes >= 100 ? BASIC_SALARY_STD : 0.0;
+  // Counts
+  const oneWashCount = oneWashData.length;
+  const subscriptionCount = jobsData.length;
+  const totalWashes = oneWashCount + subscriptionCount;
 
-  const RATE_PER_WASH = 1.35;
+  // Initialize Financials
+  let earnings = { basic: 0, incentive: 0, allowance: 0, ot: 0 };
+  let breakdown = { method: "Standard", ratesUsed: {} };
 
-  // Total earned based on washes
-  const totalWashEarnings = totalWashes * RATE_PER_WASH;
+  // Determine Worker Role & Location
+  // Ensure your Worker Model has a 'role' field. Defaulting to 'carwash' if missing.
+  const workerType = worker.role || "carwash";
+  const location = worker.location || "";
 
-  // Extra work (OT)
-  const extraWorkOt = Math.max(0, totalWashEarnings - basicSalary);
+  // === LOGIC A: CAR WASH EMPLOYEES (RESIDENTIAL) ===
+  if (workerType === "carwash") {
+    // Check Location for Day Duty vs Night Duty
+    const dayDutyBuildings = settings.carWash.dayDuty.applicableBuildings || [];
+    const isDayDuty = dayDutyBuildings.some((b) => location.includes(b));
+    const config = isDayDuty
+      ? settings.carWash.dayDuty
+      : settings.carWash.nightDuty;
 
-  // Incentive Rule: < 500 = 0, 500-999 = 100, >= 1000 = 200
-  let extraPaymentIncentive = 0.0;
-  if (totalWashes >= 1000) {
-    extraPaymentIncentive = 200.0;
-  } else if (totalWashes >= 500) {
-    extraPaymentIncentive = 100.0;
-  } else {
-    extraPaymentIncentive = 0.0;
+    // Rate Calculation
+    earnings.basic = totalWashes * config.ratePerCar;
+
+    // Incentive Calculation
+    if (totalWashes < config.incentiveThreshold) {
+      earnings.incentive = config.incentiveLow;
+    } else {
+      earnings.incentive = config.incentiveHigh;
+    }
+
+    breakdown.method = isDayDuty
+      ? "Residential Day Duty"
+      : "Residential Night Duty";
+    breakdown.totalCars = totalWashes;
+    breakdown.rate = config.ratePerCar;
   }
 
-  const totalDebit = basicSalary + extraWorkOt + extraPaymentIncentive;
+  // === LOGIC B: MALL EMPLOYEES ===
+  else if (workerType === "mall") {
+    // 3.00 for One Wash, 1.35 for Monthly
+    const payOneWash = oneWashCount * settings.mall.oneWashRate;
+    const payMonthly = subscriptionCount * settings.mall.monthlyRate;
+    earnings.basic = payOneWash + payMonthly;
 
-  // --- 4. Last Month Balance (Auto-Carry Forward) ---
-  let calculatedLastMonthBalance = 0.0;
+    // Fixed Allowance (Pro-rated)
+    // Rule: 200 / 30 * Days Worked
+    // Use manual input for 'presentDays' if provided, else use calculated count or 30
+    const daysWorked =
+      manualInputs.presentDays !== undefined
+        ? Number(manualInputs.presentDays)
+        : 30;
+    const dailyAllowance = settings.mall.fixedAllowance / 30;
+    earnings.allowance = dailyAllowance * daysWorked;
 
-  if (manualInputs.lastMonthBalance === undefined) {
+    breakdown.method = "Mall Structure";
+    breakdown.oneWashPay = payOneWash;
+    breakdown.monthlyPay = payMonthly;
+    breakdown.allowance = earnings.allowance.toFixed(2);
+  }
+
+  // === LOGIC C: CAMP EMPLOYEES ===
+  else if (workerType === "camp" || workerType === "constructionCamp") {
+    const role = worker.subRole || "helper"; // 'helper' or 'mason'
+    const roleConfig = settings.camp[role] || settings.camp.helper;
+    const general = settings.camp.settings;
+
+    // Use manual inputs for attendance as camp workers might not have 'wash' data
+    const daysPresent =
+      manualInputs.presentDays !== undefined
+        ? Number(manualInputs.presentDays)
+        : 0;
+    const otHours = Number(manualInputs.otHours) || 0;
+    const absentDays = Number(manualInputs.absentDays) || 0;
+
+    // Base Salary (Pro-rated)
+    earnings.basic =
+      (roleConfig.baseSalary / general.standardDays) * daysPresent;
+
+    // Overtime
+    earnings.ot = otHours * roleConfig.overtimeRate;
+
+    // Monthly Incentive (Full Attendance)
+    if (daysPresent >= general.standardDays && absentDays === 0) {
+      earnings.incentive = general.monthlyIncentive;
+    }
+
+    breakdown.method = `Camp - ${role}`;
+    presentDaysCount = daysPresent; // Override auto-calc for camp
+  }
+
+  // === DEDUCTIONS ===
+
+  // 1. Etisalat Sim
+  const billAmount = Number(manualInputs.simBillAmount) || 0;
+  let simDeduction = settings.etisalat.employeeBaseDeduction;
+
+  if (billAmount > settings.etisalat.monthlyBillCap) {
+    simDeduction += billAmount - settings.etisalat.monthlyBillCap;
+  }
+
+  // 2. Other Deductions
+  const advance = Number(manualInputs.advance) || 0;
+  const otherDeduction = Number(manualInputs.otherDeduction) || 0; // Generic 'absentDeduction' etc.
+
+  // 3. Last Month Balance (Fetch if not manually provided)
+  let lastMonthBalance = 0.0;
+  if (manualInputs.lastMonthBalance !== undefined) {
+    lastMonthBalance = Number(manualInputs.lastMonthBalance);
+  } else {
     const prevDate = moment(new Date(year, month, 1)).subtract(1, "month");
-    const prevMonth = prevDate.month();
-    const prevYear = prevDate.year();
-
     const prevSlip = await SalarySlipModel.findOne({
       worker: workerId,
-      month: prevMonth,
-      year: prevYear,
+      month: prevDate.month(),
+      year: prevDate.year(),
     })
       .select("closingBalance")
       .lean();
 
-    if (prevSlip && prevSlip.closingBalance) {
+    if (prevSlip && prevSlip.closingBalance < 0) {
+      // Only carry forward negative balances (debts)? Or decimals?
+      // Document implied carrying forward decimal remainders usually.
+      // Adapting your previous code:
       const decimalPart = prevSlip.closingBalance % 1;
-      calculatedLastMonthBalance = Number(decimalPart.toFixed(2));
+      lastMonthBalance = Number(decimalPart.toFixed(2));
     }
   }
 
-  // Deductions (Credits) - Use manual inputs or defaults
-
-  // ✅ NEW RULE: Etisalat 26.25 only if >= 100 washes
-  const etisalatDefault = totalWashes >= 100 ? 26.25 : 0.0;
-
-  const etisalatBalance =
-    manualInputs.etisalatBalance !== undefined
-      ? Number(manualInputs.etisalatBalance)
-      : etisalatDefault;
-
-  const lastMonthBalance =
-    manualInputs.lastMonthBalance !== undefined
-      ? Number(manualInputs.lastMonthBalance)
-      : calculatedLastMonthBalance;
-
-  const advance = Number(manualInputs.advance) || 0.0;
-  const c3Pay = Number(manualInputs.c3Pay) || 0.0;
-
-  const totalCredit = etisalatBalance + lastMonthBalance + advance + c3Pay;
-
-  // Closing Balance
-  const closingBalance = totalDebit - totalCredit;
+  // Totals
+  const totalEarnings =
+    earnings.basic + earnings.incentive + earnings.allowance + earnings.ot;
+  const totalDeductions =
+    simDeduction + advance + otherDeduction + lastMonthBalance;
+  const netSalary = totalEarnings - totalDeductions;
 
   // --- 5. Prepare Data Object ---
-  const slipData = {
+  return {
     worker: workerId,
     month,
     year,
     employeeName: worker.name,
     employeeCode: worker.employeeCode || "N/A",
+    role: workerType,
+
+    // Counts
     dailyData: dailyCounts,
-    totalWashes,
-    basicSalary: basicSalary.toFixed(2),
-    extraWorkOt: extraWorkOt.toFixed(2),
-    extraPaymentIncentive: extraPaymentIncentive.toFixed(2),
-    totalDebit: totalDebit.toFixed(2),
-    etisalatBalance: etisalatBalance.toFixed(2),
-    lastMonthBalance: lastMonthBalance.toFixed(2),
-    advance: advance.toFixed(2),
-    c3Pay: c3Pay.toFixed(2),
-    totalCredit: totalCredit.toFixed(2),
-    closingBalance: closingBalance.toFixed(2),
+    totalDirectWashes: oneWashCount,
+    totalSubscriptionWashes: subscriptionCount,
+    totalWashes: totalWashes,
+
+    // Earnings
+    basicSalary: Number(earnings.basic.toFixed(2)),
+    extraPaymentIncentive: Number(earnings.incentive.toFixed(2)),
+    allowanceAmount: Number(earnings.allowance.toFixed(2)),
+    overtimeAmount: Number(earnings.ot.toFixed(2)),
+    totalEarnings: Number(totalEarnings.toFixed(2)),
+
+    // Deductions
+    simBillAmount: billAmount,
+    simDeduction: Number(simDeduction.toFixed(2)),
+    advanceDeduction: advance,
+    otherDeduction: otherDeduction,
+    lastMonthBalance: lastMonthBalance,
+    totalDeductions: Number(totalDeductions.toFixed(2)),
+
+    // Final
+    closingBalance: Number(netSalary.toFixed(2)), // This is the Net Salary Payable
+
+    // Attendance & Manual Inputs
     presentDays: presentDaysCount,
-    absentDays: manualInputs.absentDays || 0,
-    noDutyDays: manualInputs.noDutyDays || 0,
-    sickLeaveDays: manualInputs.sickLeaveDays || 0,
+    absentDays: Number(manualInputs.absentDays) || 0,
+    sickLeaveDays: Number(manualInputs.sickLeaveDays) || 0,
+    otHours: Number(manualInputs.otHours) || 0,
+
+    calculationBreakdown: breakdown,
     daysInMonth,
   };
-
-  return slipData;
 };
 
-// Get existing slip or generate a preview
+/**
+ * Get existing slip or generate a preview
+ */
 service.getSlip = async (workerId, month, year) => {
   let slip = await SalarySlipModel.findOne({
     worker: workerId,
@@ -189,7 +278,9 @@ service.getSlip = async (workerId, month, year) => {
   }
 };
 
-// Save or Update a slip
+/**
+ * Save or Update a slip
+ */
 service.saveSlip = async (data, adminName) => {
   const { workerId, month, year, manualInputs, status } = data;
 
