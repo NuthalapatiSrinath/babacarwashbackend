@@ -40,11 +40,14 @@ service.signup = async (payload) => {
 
 service.signin = async (payload) => {
   try {
+    console.log("🔐 [ADMIN AUTH] Login attempt for number:", payload.number);
+
     const isExists = await UsersModel.countDocuments({
       number: payload.number,
     });
 
     if (isExists == 0) {
+      console.log("❌ [ADMIN AUTH] User not found for number:", payload.number);
       throw "UNAUTHORIZED";
     }
 
@@ -57,12 +60,36 @@ service.signin = async (payload) => {
         hPassword: 1,
         role: 1,
         service_type: 1,
+        buildings: 1,
+        mall: 1,
       },
-    ).lean();
+    )
+      .populate("buildings mall")
+      .lean();
+
+    console.log(
+      "👤 [ADMIN AUTH] User found:",
+      userData.name,
+      "| Role:",
+      userData.role,
+      "| Has hPassword:",
+      !!userData.hPassword,
+    );
 
     if (!AuthHelper.verifyPasswordHash(payload.password, userData.hPassword)) {
+      console.log(
+        "❌ [ADMIN AUTH] Password verification failed for:",
+        userData.name,
+      );
       throw "UNAUTHORIZED";
     }
+
+    console.log(
+      "✅ [ADMIN AUTH] Login successful for:",
+      userData.name,
+      "| Role:",
+      userData.role,
+    );
 
     const token = AuthHelper.createToken({ _id: userData._id });
 
@@ -71,6 +98,7 @@ service.signin = async (payload) => {
 
     return { token, ...userData };
   } catch (error) {
+    console.error("❌ [ADMIN AUTH] Login error:", error);
     throw error;
   }
 };

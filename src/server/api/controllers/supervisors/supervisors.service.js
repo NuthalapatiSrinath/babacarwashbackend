@@ -6,6 +6,7 @@ const OneWashModel = require("../../models/onewash.model");
 const CounterService = require("../../../utils/counters");
 const CommonHelper = require("../../../helpers/common.helper");
 const AuthHelper = require("../auth/auth.helper");
+const InAppNotifications = require("../../../notifications/in-app.notifications");
 const service = module.exports;
 
 service.list = async (userInfo, query) => {
@@ -45,32 +46,94 @@ service.create = async (userInfo, payload) => {
   if (isExists) {
     throw "Oops! The supervisor already created";
   }
+
+  // Determine service_type based on assignment
+  const service_type = payload.mall ? "mall" : "residence";
+
   const data = {
     id,
     ...payload,
+    service_type,
     createdBy: userInfo._id,
     updatedBy: userInfo._id,
     role: "supervisor",
     hPassword: AuthHelper.getPasswordHash(payload.password),
   };
   await new UsersModel(data).save();
+
+  // Send notification about new supervisor creation
+  try {
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `New supervisor "${payload.name}" has been created`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
 };
 
 service.update = async (userInfo, id, payload) => {
-  await UsersModel.updateOne({ _id: id }, { $set: payload });
+  const { password, ...updateData } = payload;
+
+  // Determine service_type based on assignment
+  if (updateData.mall) {
+    updateData.service_type = "mall";
+  } else if (updateData.buildings && updateData.buildings.length > 0) {
+    updateData.service_type = "residence";
+  }
+
+  const data = {
+    updatedBy: userInfo._id,
+    ...updateData,
+    ...(password && password.trim() !== ""
+      ? {
+          password: password,
+          hPassword: AuthHelper.getPasswordHash(password),
+        }
+      : {}),
+  };
+
+  await UsersModel.updateOne({ _id: id }, { $set: data });
+
+  // Send notification about supervisor update
+  try {
+    const supervisor = await UsersModel.findOne({ _id: id });
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `Supervisor "${supervisor?.name || "Unknown"}" details have been updated`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
 };
 
 service.delete = async (userInfo, id, payload) => {
-  return await UsersModel.updateOne(
+  const supervisor = await UsersModel.findOne({ _id: id });
+  const result = await UsersModel.updateOne(
     { _id: id },
-    { isDeleted: true, deletedBy: userInfo._id }
+    { isDeleted: true, deletedBy: userInfo._id },
   );
+
+  // Send notification about supervisor deletion
+  try {
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `Supervisor "${supervisor?.name || "Unknown"}" has been deleted`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
+
+  return result;
 };
 
 service.undoDelete = async (userInfo, id) => {
   return await UsersModel.updateOne(
     { _id: id },
-    { isDeleted: false, updatedBy: userInfo._id }
+    { isDeleted: false, updatedBy: userInfo._id },
   );
 };
 
@@ -84,7 +147,7 @@ service.teamList = async (userInfo, query) => {
     ...(userInfo.service_type == "residence"
       ? {
           buildings: {
-            $in: (userInfo.buildings || []).filter((b) => b && b.trim()),
+            $in: (userInfo.buildings || []).filter((b) => b),
           },
         }
       : null),
@@ -115,7 +178,7 @@ service.exportData = async (userInfo, query) => {
     ...(userInfo.service_type == "residence"
       ? {
           buildings: {
-            $in: (userInfo.buildings || []).filter((b) => b && b.trim()),
+            $in: (userInfo.buildings || []).filter((b) => b),
           },
         }
       : null),
@@ -151,7 +214,7 @@ service.exportData = async (userInfo, query) => {
   if (query.search) {
     const workers = await WorkersModel.find(
       { isDeleted: false, name: { $regex: query.search, $options: "i" } },
-      { _id: 1 }
+      { _id: 1 },
     ).lean();
     if (workers.length) {
       findQuery.$or.push({

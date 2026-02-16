@@ -770,7 +770,10 @@ service.supervisors = async (userInfo, body) => {
     ...(userInfo.service_type == "residence"
       ? {
           buildings: {
-            $in: (userInfo.buildings || []).filter((b) => b && b.trim()),
+            $in: (userInfo.buildings || [])
+              .filter((b) => b)
+              .map((b) => (typeof b === 'string' ? b.trim() : b.toString()))
+              .filter((b) => b),
           },
         }
       : null),

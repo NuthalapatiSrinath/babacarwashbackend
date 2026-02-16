@@ -12,6 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const moment = require("moment"); // ✅ Required for dates
+const InAppNotifications = require("../../../notifications/in-app.notifications");
 // ... keep existing imports (WorkersModel, OnewashModel, JobsModel, etc.)
 const service = module.exports;
 
@@ -162,7 +163,20 @@ service.create = async (userInfo, payload) => {
       ? AuthHelper.getPasswordHash(payload.password)
       : undefined,
   };
-  await new WorkersModel(data).save();
+  const worker = await new WorkersModel(data).save();
+
+  // Send notification to admins/managers about new worker creation
+  try {
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `New worker "${payload.name}" has been created successfully`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
+
+  return worker;
 };
 
 service.update = async (userInfo, id, payload) => {
@@ -188,6 +202,18 @@ service.update = async (userInfo, id, payload) => {
       : {}),
   };
   await WorkersModel.updateOne({ _id: id }, { $set: data });
+
+  // Send notification about worker update
+  try {
+    const worker = await WorkersModel.findOne({ _id: id });
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `Worker "${worker?.name || "Unknown"}" details have been updated`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
 };
 
 service.delete = async (userInfo, id, payload) => {
@@ -198,10 +224,27 @@ service.delete = async (userInfo, id, payload) => {
   if (isExists) {
     throw "This worker is currently assigned to customers and cannot be deleted";
   }
-  return await WorkersModel.updateOne(
+
+  // Get worker details before deletion
+  const worker = await WorkersModel.findOne({ _id: id });
+
+  const result = await WorkersModel.updateOne(
     { _id: id },
     { isDeleted: true, deletedBy: userInfo._id },
   );
+
+  // Send notification about worker deletion
+  try {
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `Worker "${worker?.name || "Unknown"}" has been deleted`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
+
+  return result;
 };
 
 service.undoDelete = async (userInfo, id) => {

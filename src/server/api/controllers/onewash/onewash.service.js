@@ -7,6 +7,7 @@ const CounterService = require("../../../utils/counters");
 const CommonHelper = require("../../../helpers/common.helper");
 const moment = require("moment");
 const exceljs = require("exceljs");
+const InAppNotifications = require("../../../notifications/in-app.notifications");
 const service = module.exports;
 
 // --- UTILS ---
@@ -141,12 +142,44 @@ service.create = async (userInfo, payload) => {
   if (payload.service_type === "residence" && !payload.building)
     throw new Error("Building required");
 
+  // Calculate tip for card payments if status is completed
+  let tip_amount = 0;
+  if (
+    payload.payment_mode &&
+    payload.payment_mode !== "cash" &&
+    payload.amount
+  ) {
+    let baseAmount;
+    if (payload.wash_type === "total") {
+      baseAmount = 31.5;
+    } else if (payload.wash_type === "outside") {
+      baseAmount = 21.5;
+    } else {
+      // For "inside" or undefined, fetch from mall/building
+      if (payload.mall) {
+        const mallData = await MallsModel.findOne({ _id: payload.mall });
+        baseAmount = mallData ? mallData.amount + mallData.card_charges : 21.5;
+      } else if (payload.building) {
+        const buildingData = await BuildingsModel.findOne({
+          _id: payload.building,
+        });
+        baseAmount = buildingData
+          ? buildingData.amount + buildingData.card_charges
+          : 21.5;
+      } else {
+        baseAmount = 21.5;
+      }
+    }
+    tip_amount = payload.amount > baseAmount ? payload.amount - baseAmount : 0;
+  }
+
   const id = await CounterService.id("onewash");
   const data = {
     createdBy: userInfo._id,
     updatedBy: userInfo._id,
     id,
     ...payload,
+    tip_amount,
   };
   const saved = await new OneWashModel(data).save();
   let created = await OneWashModel.findById(saved._id).lean();
@@ -158,6 +191,18 @@ service.create = async (userInfo, payload) => {
       { path: "building", model: "buildings" },
     ]);
   } catch (e) {}
+
+  // Send notification about new wash
+  try {
+    const workerName = created.worker?.name || "Unknown";
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `New wash created by ${workerName} - ${payload.registration_no} | ₹${payload.amount}`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
 
   return created;
 };
@@ -181,11 +226,23 @@ service.update = async (userInfo, id, payload) => {
   if (onewashData.mall) {
     const mallData = await MallsModel.findOne({ _id: onewashData.mall });
     if (payload.payment_mode != "cash" && mallData) {
-      const finalAmount = mallData.amount + mallData.card_charges;
-      if (payload.amount < finalAmount)
+      // Updated tip calculation logic based on wash_type
+      let baseAmount;
+      if (onewashData.wash_type === "total") {
+        // Internal + External Wash
+        baseAmount = 31.5;
+      } else if (onewashData.wash_type === "outside") {
+        // External Wash only
+        baseAmount = 21.5;
+      } else {
+        // Fallback to existing logic for other types (inside, or undefined)
+        baseAmount = mallData.amount + mallData.card_charges;
+      }
+
+      if (payload.amount < baseAmount)
         throw "Amount entered is less than required";
       tip_amount =
-        payload.amount > finalAmount ? payload.amount - finalAmount : 0;
+        payload.amount > baseAmount ? payload.amount - baseAmount : 0;
     }
   }
 
@@ -194,16 +251,29 @@ service.update = async (userInfo, id, payload) => {
       _id: onewashData.building,
     });
     if (payload.payment_mode != "cash" && buildingData) {
-      const finalAmount = buildingData.amount + buildingData.card_charges;
-      if (payload.amount < finalAmount)
+      // Updated tip calculation logic based on wash_type
+      let baseAmount;
+      if (onewashData.wash_type === "total") {
+        // Internal + External Wash
+        baseAmount = 31.5;
+      } else if (onewashData.wash_type === "outside") {
+        // External Wash only
+        baseAmount = 21.5;
+      } else {
+        // Fallback to existing logic for other types (inside, or undefined)
+        baseAmount = buildingData.amount + buildingData.card_charges;
+      }
+
+      if (payload.amount < baseAmount)
         throw "Amount entered is less than required";
       tip_amount =
-        payload.amount > finalAmount ? payload.amount - finalAmount : 0;
+        payload.amount > baseAmount ? payload.amount - baseAmount : 0;
     }
   }
 
   const updateSet = {
     amount_paid,
+    tip_amount,
     status: payload.status,
     payment_mode: payload.payment_mode,
     vehicle: {
@@ -320,6 +390,7 @@ service.exportData = async (userInfo, query) => {
     { header: "Time", key: "time", width: 15 },
     { header: "Vehicle No", key: "registration_no", width: 20 },
     { header: "Parking No", key: "parking_no", width: 15 },
+    { header: "Service Type", key: "wash_type", width: 20 },
     { header: "Amount (AED)", key: "amount", width: 15 },
     { header: "Tip (AED)", key: "tip_amount", width: 10 },
     { header: "Payment Mode", key: "payment_mode", width: 15 },
@@ -333,12 +404,24 @@ service.exportData = async (userInfo, query) => {
 
   data.forEach((item) => {
     const dateObj = new Date(item.createdAt);
+
+    // Format wash_type for display
+    let washTypeDisplay = "-";
+    if (item.wash_type === "outside") {
+      washTypeDisplay = "External Wash";
+    } else if (item.wash_type === "total") {
+      washTypeDisplay = "Internal + External";
+    } else if (item.wash_type === "inside") {
+      washTypeDisplay = "Internal Wash";
+    }
+
     worksheet.addRow({
       id: item.id,
       date: moment(dateObj).format("YYYY-MM-DD"),
       time: moment(dateObj).format("hh:mm A"),
       registration_no: item.registration_no,
       parking_no: item.parking_no || "-",
+      wash_type: washTypeDisplay,
       amount: item.amount,
       tip_amount: item.tip_amount || 0,
       payment_mode: item.payment_mode || "-",

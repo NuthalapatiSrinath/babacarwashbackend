@@ -209,11 +209,31 @@ service.info = async (userInfo, id) => {
 
 service.create = async (userInfo, payload) => {
   const id = await CounterService.id("workers");
+
+  // Auto-detect service_type if not provided
+  let serviceType = payload.service_type;
+  if (!serviceType && payload.customer) {
+    try {
+      const CustomersModel = require("../../models/customers.model");
+      const customer = await CustomersModel.findById(payload.customer).lean();
+      if (customer) {
+        if (customer.building) {
+          serviceType = "Residence";
+        } else if (customer.location) {
+          serviceType = "Mall";
+        }
+      }
+    } catch (error) {
+      console.error("Failed to auto-detect service_type:", error);
+    }
+  }
+
   const data = {
     createdBy: userInfo._id,
     updatedBy: userInfo._id,
     id,
     ...payload,
+    service_type: serviceType || payload.service_type,
     worker: payload.worker || null,
     customer: payload.customer || null,
     vehicle: payload.vehicle || null,
@@ -365,6 +385,7 @@ service.exportData = async (userInfo, rawQuery) => {
       { header: "Building", key: "building", width: 20 },
       { header: "Vehicle No", key: "vehicle", width: 15 },
       { header: "Parking No", key: "parking", width: 15 },
+      { header: "Service Type", key: "service_type", width: 20 },
       { header: "Worker", key: "worker", width: 20 },
       { header: "Status", key: "status", width: 15 },
     ];
@@ -395,6 +416,14 @@ service.exportData = async (userInfo, rawQuery) => {
         building: item.building?.name || "-",
         vehicle: vehicleInfo?.registration_no || "-",
         parking: vehicleInfo?.parking_no || "-",
+        service_type:
+          vehicleInfo?.wash_type === "outside"
+            ? "External Wash"
+            : vehicleInfo?.wash_type === "total"
+              ? "Internal + External"
+              : vehicleInfo?.wash_type === "inside"
+                ? "Internal Wash"
+                : "-",
         worker: item.worker?.name || "Unassigned",
         status: item.status || "pending",
       });

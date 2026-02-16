@@ -4,6 +4,7 @@ const moment = require("moment");
 const WorkersModel = require("../../models/workers.model");
 const StaffModel = require("../../models/staff.model");
 const AttendanceModel = require("../../models/attendance.model");
+const InAppNotifications = require("../../../notifications/in-app.notifications");
 
 const service = module.exports;
 
@@ -78,6 +79,19 @@ service.update = async (userInfo, payload) => {
     { _id: { $in: payload.ids } },
     { $set: updateData },
   );
+
+  // Send notification about attendance update
+  try {
+    const count = payload.ids?.length || 0;
+    const status = payload.present ? "present" : "absent";
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `Attendance updated: ${count} worker(s) marked as ${status}`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
 };
 
 service.exportData = async (userInfo, query) => {

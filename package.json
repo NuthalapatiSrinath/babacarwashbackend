@@ -31,6 +31,7 @@
     "nodemailer": "^6.9.1",
     "oci-sdk": "^2.122.2",
     "pdfkit-table": "^0.1.99",
+    "react-toastify": "^11.0.5",
     "serverless-http": "^4.0.0",
     "swagger-autogen": "^2.23.5",
     "swagger-jsdoc": "^6.2.8",

@@ -8,6 +8,7 @@ const TransactionsModel = require("../../models/transactions.model");
 const WorkersModel = require("../../models/workers.model");
 const CounterService = require("../../../utils/counters");
 const CommonHelper = require("../../../helpers/common.helper");
+const InAppNotifications = require("../../../notifications/in-app.notifications");
 
 const service = module.exports;
 
@@ -336,6 +337,17 @@ service.collectPayment = async (userInfo, id, payload) => {
     createdBy: userInfo._id,
     updatedBy: userInfo._id,
   }).save();
+
+  // Send notification about payment collection
+  try {
+    await InAppNotifications.send({
+      worker: userInfo._id,
+      message: `Payment collected: ₹${payload.amount} | Status: ${status}`,
+      createdBy: userInfo._id,
+    });
+  } catch (error) {
+    console.error("Failed to send notification:", error);
+  }
 };
 
 service.settlements = async (userInfo, query) => {
@@ -593,9 +605,11 @@ service.exportData = async (userInfo, query) => {
     { header: "Time", key: "time", width: 15 },
     { header: "Vehicle No", key: "vehicle", width: 20 },
     { header: "Parking No", key: "parking_no", width: 15 },
+    { header: "Service Type", key: "service_type", width: 20 },
     { header: "Worker", key: "worker", width: 25 },
     { header: "Location", key: "location", width: 30 },
     { header: "Amount Paid", key: "amount_paid", width: 15 },
+    { header: "Tip Amount", key: "tip_amount", width: 12 },
     { header: "Payment Mode", key: "payment_mode", width: 15 },
     { header: "Status", key: "status", width: 15 },
     { header: "Settle Status", key: "settled", width: 15 },
@@ -612,9 +626,18 @@ service.exportData = async (userInfo, query) => {
       time: moment(dateObj).format("hh:mm A"),
       vehicle: item.vehicle?.registration_no || "-",
       parking_no: item.vehicle?.parking_no || "-",
+      service_type:
+        item.vehicle?.wash_type === "outside"
+          ? "External Wash"
+          : item.vehicle?.wash_type === "total"
+            ? "Internal + External"
+            : item.vehicle?.wash_type === "inside"
+              ? "Internal Wash"
+              : "-",
       worker: item.worker?.name || "Unassigned",
       location: locationName,
       amount_paid: item.amount_paid || 0,
+      tip_amount: item.tip_amount || 0,
       payment_mode: item.payment_mode || "-",
       status: item.status || "pending",
       settled: item.settled || "pending",
