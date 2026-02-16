@@ -138,13 +138,19 @@ service.info = async (userInfo, id) => {
 
 service.create = async (userInfo, payload) => {
   const query = { isDeleted: false, $or: [{ mobile: payload.mobile }] };
-  if (payload.employeeCode)
+  if (payload.employeeCode && payload.employeeCode.trim())
     query.$or.push({ employeeCode: payload.employeeCode });
 
   const userExists = await WorkersModel.countDocuments(query);
   if (userExists) {
     throw "USER-EXISTS";
   }
+
+  // Remove employeeCode if it's empty to avoid duplicate key error
+  if (!payload.employeeCode || payload.employeeCode.trim() === "") {
+    delete payload.employeeCode;
+  }
+
   const id = await CounterService.id("workers");
   const data = {
     createdBy: userInfo._id,
@@ -161,6 +167,16 @@ service.create = async (userInfo, payload) => {
 
 service.update = async (userInfo, id, payload) => {
   const { password, ...updateData } = payload;
+
+  // Remove employeeCode if it's empty to avoid duplicate key error
+  if (
+    updateData.employeeCode === "" ||
+    updateData.employeeCode === null ||
+    updateData.employeeCode === undefined
+  ) {
+    delete updateData.employeeCode;
+  }
+
   const data = {
     updatedBy: userInfo._id,
     ...updateData,
