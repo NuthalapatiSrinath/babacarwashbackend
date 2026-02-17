@@ -16,6 +16,12 @@ const isValidId = (id) =>
 
 // --- LIST ---
 service.list = async (userInfo, query) => {
+  // Clean up empty string references in mall and building fields
+  await OneWashModel.updateMany(
+    { $or: [{ mall: "" }, { building: "" }] },
+    { $unset: { mall: "", building: "" } },
+  ).catch((err) => console.log("Cleanup warning:", err.message));
+
   const findQuery = { isDeleted: false };
   if (!query.worker) findQuery.worker = { $ne: "" };
 
@@ -96,11 +102,26 @@ service.list = async (userInfo, query) => {
     .lean();
 
   try {
-    data = await OneWashModel.populate(data, [
+    // Populate with proper checks for empty strings
+    const populateOptions = [
       { path: "worker", model: "workers", select: "name" },
-      { path: "mall", model: "malls", select: "name" },
-      { path: "building", model: "buildings", select: "name" },
-    ]);
+    ];
+
+    // Only populate mall if it exists and is not empty string
+    if (data.some((item) => item.mall && item.mall !== "")) {
+      populateOptions.push({ path: "mall", model: "malls", select: "name" });
+    }
+
+    // Only populate building if it exists and is not empty string
+    if (data.some((item) => item.building && item.building !== "")) {
+      populateOptions.push({
+        path: "building",
+        model: "buildings",
+        select: "name",
+      });
+    }
+
+    data = await OneWashModel.populate(data, populateOptions);
   } catch (e) {
     console.error("List Populate Warning:", e.message);
   }
@@ -144,7 +165,10 @@ service.create = async (userInfo, payload) => {
 
   // Calculate tip for card payments if status is completed
   let tip_amount = 0;
+
+  // For MALL: Calculate tip based on wash_type
   if (
+    payload.service_type === "mall" &&
     payload.payment_mode &&
     payload.payment_mode !== "cash" &&
     payload.amount
@@ -155,23 +179,19 @@ service.create = async (userInfo, payload) => {
     } else if (payload.wash_type === "outside") {
       baseAmount = 21.5;
     } else {
-      // For "inside" or undefined, fetch from mall/building
+      // For "inside" or undefined, fetch from mall
       if (payload.mall) {
         const mallData = await MallsModel.findOne({ _id: payload.mall });
         baseAmount = mallData ? mallData.amount + mallData.card_charges : 21.5;
-      } else if (payload.building) {
-        const buildingData = await BuildingsModel.findOne({
-          _id: payload.building,
-        });
-        baseAmount = buildingData
-          ? buildingData.amount + buildingData.card_charges
-          : 21.5;
       } else {
         baseAmount = 21.5;
       }
     }
     tip_amount = payload.amount > baseAmount ? payload.amount - baseAmount : 0;
   }
+
+  // For RESIDENCE: No tip calculation - tip is always 0
+  // The amount entered is just the payment amount, not a tip
 
   const id = await CounterService.id("onewash");
   const data = {
@@ -185,12 +205,22 @@ service.create = async (userInfo, payload) => {
   let created = await OneWashModel.findById(saved._id).lean();
 
   try {
-    created = await OneWashModel.populate(created, [
-      { path: "worker", model: "workers" },
-      { path: "mall", model: "malls" },
-      { path: "building", model: "buildings" },
-    ]);
-  } catch (e) {}
+    const populateOptions = [{ path: "worker", model: "workers" }];
+
+    // Only populate mall if it exists
+    if (created.mall && created.mall !== "") {
+      populateOptions.push({ path: "mall", model: "malls" });
+    }
+
+    // Only populate building if it exists
+    if (created.building && created.building !== "") {
+      populateOptions.push({ path: "building", model: "buildings" });
+    }
+
+    created = await OneWashModel.populate(created, populateOptions);
+  } catch (e) {
+    console.error("Create populate warning:", e.message);
+  }
 
   // Send notification about new wash
   try {
@@ -223,6 +253,7 @@ service.update = async (userInfo, id, payload) => {
   let amount_paid = payload.amount;
   let tip_amount = 0;
 
+  // For MALL: Calculate tip based on wash_type and base amount
   if (onewashData.mall) {
     const mallData = await MallsModel.findOne({ _id: onewashData.mall });
     if (payload.payment_mode != "cash" && mallData) {
@@ -246,29 +277,11 @@ service.update = async (userInfo, id, payload) => {
     }
   }
 
+  // For RESIDENCE: Tip is simply the entered amount (no calculation)
   if (onewashData.building) {
-    const buildingData = await BuildingsModel.findOne({
-      _id: onewashData.building,
-    });
-    if (payload.payment_mode != "cash" && buildingData) {
-      // Updated tip calculation logic based on wash_type
-      let baseAmount;
-      if (onewashData.wash_type === "total") {
-        // Internal + External Wash
-        baseAmount = 31.5;
-      } else if (onewashData.wash_type === "outside") {
-        // External Wash only
-        baseAmount = 21.5;
-      } else {
-        // Fallback to existing logic for other types (inside, or undefined)
-        baseAmount = buildingData.amount + buildingData.card_charges;
-      }
-
-      if (payload.amount < baseAmount)
-        throw "Amount entered is less than required";
-      tip_amount =
-        payload.amount > baseAmount ? payload.amount - baseAmount : 0;
-    }
+    // For residential, the amount entered is NOT a tip, it's just the amount
+    // Tip should be 0 for residential jobs
+    tip_amount = 0;
   }
 
   const updateSet = {
@@ -293,6 +306,7 @@ service.update = async (userInfo, id, payload) => {
         payment_mode: payload.payment_mode,
         parking_no: payload.parking_no,
         registration_no: payload.registration_no,
+        ...(payload.wash_type ? { wash_type: payload.wash_type } : {}), // Include wash_type if provided
       },
     },
   );
