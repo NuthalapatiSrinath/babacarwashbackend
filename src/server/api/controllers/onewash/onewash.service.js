@@ -126,6 +126,33 @@ service.list = async (userInfo, query) => {
     console.error("List Populate Warning:", e.message);
   }
 
+  // Add computed display_service_type based on pricing configuration
+  const PricingModel = require("../../models/pricing.model");
+  for (let item of data) {
+    if (item.service_type === "mall" && item.mall) {
+      // Check if this mall has pricing configured with wash types
+      const mallId = typeof item.mall === "object" ? item.mall._id : item.mall;
+      const pricing = await PricingModel.findOne({
+        mall: mallId,
+        service_type: "mall",
+        isDeleted: false,
+      }).lean();
+
+      if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+        // Mall has wash types configured - show actual wash type
+        item.display_service_type = item.wash_type
+          ? item.wash_type.toUpperCase()
+          : "INTERNAL";
+      } else {
+        // Mall not configured - show "Mall"
+        item.display_service_type = "Mall";
+      }
+    } else {
+      // For residence or other types, keep original
+      item.display_service_type = item.service_type;
+    }
+  }
+
   const totalPayments = await OneWashModel.aggregate([
     { $match: findQuery },
     { $group: { _id: "$payment_mode", amount: { $sum: "$amount" } } },
@@ -163,31 +190,74 @@ service.create = async (userInfo, payload) => {
   if (payload.service_type === "residence" && !payload.building)
     throw new Error("Building required");
 
-  // Calculate tip for card payments if status is completed
+  // ✅ Clean up payload based on service_type
+  if (payload.service_type === "residence") {
+    delete payload.wash_type;
+    delete payload.mall;
+  } else if (payload.service_type === "mall") {
+    delete payload.building;
+    if (!payload.wash_type) {
+      payload.wash_type = "inside";
+    }
+  }
+
+  // Calculate tip for mall with pricing configuration only
   let tip_amount = 0;
 
-  // For MALL: Calculate tip based on wash_type
-  if (
-    payload.service_type === "mall" &&
-    payload.payment_mode &&
-    payload.payment_mode !== "cash" &&
-    payload.amount
-  ) {
-    let baseAmount;
-    if (payload.wash_type === "total") {
-      baseAmount = 31.5;
-    } else if (payload.wash_type === "outside") {
-      baseAmount = 21.5;
-    } else {
-      // For "inside" or undefined, fetch from mall
-      if (payload.mall) {
-        const mallData = await MallsModel.findOne({ _id: payload.mall });
-        baseAmount = mallData ? mallData.amount + mallData.card_charges : 21.5;
+  // For MALL: Check if pricing is configured, then calculate tip
+  if (payload.service_type === "mall" && payload.mall && payload.amount) {
+    const PricingModel = require("../../models/pricing.model");
+    const pricingData = await PricingModel.findOne({
+      mall: payload.mall,
+      service_type: "mall",
+      isDeleted: false,
+    }).lean();
+
+    // Only calculate tip if mall has pricing configured with wash types
+    if (pricingData && pricingData.sedan && pricingData.sedan.wash_types) {
+      let baseAmount;
+
+      if (
+        payload.payment_mode === "card" ||
+        payload.payment_mode === "bank transfer"
+      ) {
+        // Card/Bank payment base amounts
+        if (payload.wash_type === "total") {
+          baseAmount = 31.5; // Internal + External
+        } else if (payload.wash_type === "outside") {
+          baseAmount = 21.5; // External only
+        } else {
+          // For "inside" - no standard rate, use mall default
+          const mallData = await MallsModel.findOne({ _id: payload.mall });
+          baseAmount = mallData
+            ? mallData.amount + (mallData.card_charges || 0)
+            : 21.5;
+        }
+      } else if (payload.payment_mode === "cash") {
+        // Cash payment base amounts
+        if (payload.wash_type === "total") {
+          baseAmount = 31; // Internal + External
+        } else if (payload.wash_type === "outside") {
+          baseAmount = 21; // External only
+        } else if (payload.wash_type === "inside") {
+          baseAmount = 10; // Internal only
+        } else {
+          baseAmount = 21; // Default to external
+        }
       } else {
-        baseAmount = 21.5;
+        baseAmount = 0; // Unknown payment mode
       }
+
+      tip_amount =
+        payload.amount > baseAmount ? payload.amount - baseAmount : 0;
+      console.log(
+        `💰 [TIP] Mall with pricing - Payment: ${payload.payment_mode}, Wash: ${payload.wash_type}, Base: ${baseAmount}, Amount: ${payload.amount}, Tip: ${tip_amount}`,
+      );
+    } else {
+      // Mall not configured with wash types - no tip, all amount
+      tip_amount = 0;
+      console.log(`💰 [TIP] Mall without pricing config - All amount, no tip`);
     }
-    tip_amount = payload.amount > baseAmount ? payload.amount - baseAmount : 0;
   }
 
   // For RESIDENCE: No tip calculation - tip is always 0
@@ -250,35 +320,88 @@ service.update = async (userInfo, id, payload) => {
   }
 
   const onewashData = await OneWashModel.findOne({ _id: id }).lean();
-  let amount_paid = payload.amount;
+
+  // ✅ Determine service type from existing data or payload
+  const serviceType = payload.service_type || onewashData.service_type;
+
+  // ✅ Clean up payload based on service_type
+  const updatePayload = { ...payload };
+  if (serviceType === "residence") {
+    delete updatePayload.wash_type;
+    delete updatePayload.mall;
+  } else if (serviceType === "mall") {
+    delete updatePayload.building;
+  }
+
+  let amount_paid = updatePayload.amount;
   let tip_amount = 0;
 
-  // For MALL: Calculate tip based on wash_type and base amount
-  if (onewashData.mall) {
-    const mallData = await MallsModel.findOne({ _id: onewashData.mall });
-    if (payload.payment_mode != "cash" && mallData) {
-      // Updated tip calculation logic based on wash_type
+  // For MALL: Check pricing configuration then calculate tip
+  if ((onewashData.mall || updatePayload.mall) && serviceType === "mall") {
+    const mallId = updatePayload.mall || onewashData.mall;
+    const PricingModel = require("../../models/pricing.model");
+    const pricingData = await PricingModel.findOne({
+      mall: mallId,
+      service_type: "mall",
+      isDeleted: false,
+    }).lean();
+
+    // Only calculate tip if mall has pricing configured with wash types
+    if (pricingData && pricingData.sedan && pricingData.sedan.wash_types) {
+      const washType = updatePayload.wash_type || onewashData.wash_type;
+      const paymentMode =
+        updatePayload.payment_mode || onewashData.payment_mode;
       let baseAmount;
-      if (onewashData.wash_type === "total") {
-        // Internal + External Wash
-        baseAmount = 31.5;
-      } else if (onewashData.wash_type === "outside") {
-        // External Wash only
-        baseAmount = 21.5;
+
+      if (paymentMode === "card" || paymentMode === "bank transfer") {
+        // Card/Bank payment base amounts
+        if (washType === "total") {
+          baseAmount = 31.5; // Internal + External
+        } else if (washType === "outside") {
+          baseAmount = 21.5; // External only
+        } else {
+          // For "inside" - fetch mall default
+          const mallData = await MallsModel.findOne({ _id: mallId });
+          baseAmount = mallData
+            ? mallData.amount + (mallData.card_charges || 0)
+            : 21.5;
+        }
+      } else if (paymentMode === "cash") {
+        // Cash payment base amounts
+        if (washType === "total") {
+          baseAmount = 31; // Internal + External
+        } else if (washType === "outside") {
+          baseAmount = 21; // External only
+        } else if (washType === "inside") {
+          baseAmount = 10; // Internal only
+        } else {
+          baseAmount = 21; // Default
+        }
       } else {
-        // Fallback to existing logic for other types (inside, or undefined)
-        baseAmount = mallData.amount + mallData.card_charges;
+        baseAmount = 0;
       }
 
-      if (payload.amount < baseAmount)
+      if (updatePayload.amount < baseAmount)
         throw "Amount entered is less than required";
       tip_amount =
-        payload.amount > baseAmount ? payload.amount - baseAmount : 0;
+        updatePayload.amount > baseAmount
+          ? updatePayload.amount - baseAmount
+          : 0;
+      console.log(
+        `💰 [UPDATE TIP] Payment: ${paymentMode}, Wash: ${washType}, Base: ${baseAmount}, Amount: ${updatePayload.amount}, Tip: ${tip_amount}`,
+      );
+    } else {
+      // Mall not configured - no tip calculation
+      tip_amount = 0;
+      console.log(`💰 [UPDATE TIP] Mall without pricing - No tip`);
     }
   }
 
-  // For RESIDENCE: Tip is simply the entered amount (no calculation)
-  if (onewashData.building) {
+  // For RESIDENCE: Tip is always 0
+  if (
+    (onewashData.building || updatePayload.building) &&
+    serviceType === "residence"
+  ) {
     // For residential, the amount entered is NOT a tip, it's just the amount
     // Tip should be 0 for residential jobs
     tip_amount = 0;
@@ -296,20 +419,46 @@ service.update = async (userInfo, id, payload) => {
   };
 
   await PaymentsModel.updateOne({ job: id }, { $set: updateSet });
-  await OneWashModel.updateOne(
-    { _id: id },
-    {
-      $set: {
-        tip_amount,
-        amount: amount_paid,
-        status: payload.status,
-        payment_mode: payload.payment_mode,
-        parking_no: payload.parking_no,
-        registration_no: payload.registration_no,
-        ...(payload.wash_type ? { wash_type: payload.wash_type } : {}), // Include wash_type if provided
-      },
-    },
-  );
+
+  // ✅ Build update object - only include wash_type for mall jobs
+  const onewashUpdate = {
+    tip_amount,
+    amount: amount_paid,
+    status: updatePayload.status,
+    payment_mode: updatePayload.payment_mode,
+    parking_no: updatePayload.parking_no,
+    registration_no: updatePayload.registration_no,
+  };
+
+  // Only include service_type if provided
+  if (updatePayload.service_type) {
+    onewashUpdate.service_type = updatePayload.service_type;
+  }
+
+  // Build separate unset object for fields to remove
+  const unsetFields = {};
+
+  // Only include mall/building based on service type
+  if (serviceType === "mall") {
+    if (updatePayload.mall) onewashUpdate.mall = updatePayload.mall;
+    if (updatePayload.wash_type)
+      onewashUpdate.wash_type = updatePayload.wash_type;
+    // Remove building for mall jobs
+    unsetFields.building = "";
+  } else if (serviceType === "residence") {
+    if (updatePayload.building) onewashUpdate.building = updatePayload.building;
+    // Remove mall and wash_type for residence jobs
+    unsetFields.mall = "";
+    unsetFields.wash_type = "";
+  }
+
+  // Perform update with both $set and $unset if needed
+  const updateOperation = { $set: onewashUpdate };
+  if (Object.keys(unsetFields).length > 0) {
+    updateOperation.$unset = unsetFields;
+  }
+
+  await OneWashModel.updateOne({ _id: id }, updateOperation);
 };
 
 // --- DELETE ---
@@ -395,6 +544,47 @@ service.exportData = async (userInfo, query) => {
     .sort({ createdAt: -1 })
     .lean();
 
+  // Compute display_service_type for each item
+  const PricingModel = require("../../models/pricing.model");
+  const dataWithServiceType = await Promise.all(
+    data.map(async (item) => {
+      let display_service_type = "-";
+
+      if (item.service_type === "residence") {
+        display_service_type = "Residence";
+      } else if (item.mall) {
+        // Check if mall has pricing configured with wash_types
+        const pricing = await PricingModel.findOne({
+          mall: item.mall._id || item.mall,
+        }).lean();
+        if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+          // Mall has wash types configured, show the wash type
+          if (item.wash_type === "outside") {
+            display_service_type = "EXTERNAL";
+          } else if (item.wash_type === "total") {
+            display_service_type = "TOTAL";
+          } else if (item.wash_type === "inside") {
+            display_service_type = "INTERNAL";
+          } else {
+            display_service_type = "Mall";
+          }
+        } else {
+          // Mall doesn't have wash types configured
+          display_service_type = "Mall";
+        }
+      } else if (item.building) {
+        display_service_type = "Residence";
+      } else {
+        display_service_type = "Mall";
+      }
+
+      return {
+        ...item,
+        display_service_type,
+      };
+    }),
+  );
+
   const workbook = new exceljs.Workbook();
   const worksheet = workbook.addWorksheet("One Wash Report");
 
@@ -416,18 +606,8 @@ service.exportData = async (userInfo, query) => {
 
   worksheet.getRow(1).font = { bold: true };
 
-  data.forEach((item) => {
+  dataWithServiceType.forEach((item) => {
     const dateObj = new Date(item.createdAt);
-
-    // Format wash_type for display
-    let washTypeDisplay = "-";
-    if (item.wash_type === "outside") {
-      washTypeDisplay = "External Wash";
-    } else if (item.wash_type === "total") {
-      washTypeDisplay = "Internal + External";
-    } else if (item.wash_type === "inside") {
-      washTypeDisplay = "Internal Wash";
-    }
 
     worksheet.addRow({
       id: item.id,
@@ -435,7 +615,7 @@ service.exportData = async (userInfo, query) => {
       time: moment(dateObj).format("hh:mm A"),
       registration_no: item.registration_no,
       parking_no: item.parking_no || "-",
-      wash_type: washTypeDisplay,
+      wash_type: item.display_service_type || "-",
       amount: item.amount,
       tip_amount: item.tip_amount || 0,
       payment_mode: item.payment_mode || "-",

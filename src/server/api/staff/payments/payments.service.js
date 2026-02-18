@@ -5,6 +5,7 @@ const JobsModel = require("../../models/jobs.model");
 const MallsModel = require("../../models/malls.model");
 const BuildingsModel = require("../../models/buildings.model");
 const TransactionsModel = require("../../models/transactions.model");
+const PricingModel = require("../../models/pricing.model");
 const CounterService = require("../../../utils/counters");
 const CommonHelper = require("../../../helpers/common.helper");
 const service = module.exports;
@@ -57,7 +58,6 @@ service.list = async (userInfo, query) => {
     .skip(paginationData.skip)
     .limit(paginationData.limit)
     .populate([
-      { path: "job", model: "jobs" },
       { path: "location", model: "locations" },
       { path: "building", model: "buildings" },
       { path: "customer", model: "customers" },
@@ -66,6 +66,87 @@ service.list = async (userInfo, query) => {
 
   const onewashPayments = data.filter((e) => e.onewash);
   const residencePayments = data.filter((e) => !e.onewash);
+
+  // Add display_service_type to onewash payments
+  const onewashPaymentsWithServiceType = await Promise.all(
+    onewashPayments.map(async (payment) => {
+      let display_service_type = null;
+      let wash_type = null;
+
+      // For onewash payments, find the job by matching onewash document
+      // that has this payment ID in its payment field, or use job field if available
+      const jobId = payment.job;
+      let job = null;
+
+      if (jobId) {
+        // Try to find the onewash job by the job ID
+        job = await OneWashModel.findOne({ _id: jobId }).lean();
+      }
+
+      if (!job) {
+        // Fallback: find onewash job by worker and vehicle registration
+        job = await OneWashModel.findOne({
+          worker: payment.worker,
+          registration_no: payment.vehicle?.registration_no,
+          isDeleted: false,
+          status: { $in: ["pending", "completed"] },
+        })
+          .sort({ createdAt: -1 })
+          .lean();
+      }
+
+      if (job) {
+        console.log("OneWash Payment Debug:", {
+          paymentId: payment._id,
+          jobId: job._id,
+          raw_wash_type: job.wash_type,
+          service_type: job.service_type,
+          mall: job.mall,
+          building: job.building,
+          registration: payment.vehicle?.registration_no,
+        });
+
+        if (job.service_type === "residence") {
+          display_service_type = "Residence";
+          // Don't set wash_type for residence
+        } else if (job.mall) {
+          // Check if mall has pricing configured with wash_types
+          const pricing = await PricingModel.findOne({ mall: job.mall }).lean();
+          if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+            // Mall has wash types configured, show the wash type and set wash_type field
+            display_service_type = job.wash_type
+              ? job.wash_type.toUpperCase()
+              : "MALL";
+            wash_type = job.wash_type || null; // Only set wash_type if pricing configured
+          } else {
+            // Mall doesn't have wash types configured
+            display_service_type = "Mall";
+            // Don't set wash_type
+          }
+        } else if (job.building) {
+          display_service_type = "Residence";
+          // Don't set wash_type for residence
+        } else {
+          display_service_type = "Mall";
+        }
+      } else {
+        console.log(
+          "OneWash job not found for payment:",
+          payment._id,
+          "jobId:",
+          jobId,
+          "vehicle:",
+          payment.vehicle?.registration_no,
+        );
+      }
+
+      return {
+        ...payment,
+        display_service_type,
+        wash_type,
+      };
+    }),
+  );
 
   const paymentsMap = {};
 
@@ -106,7 +187,10 @@ service.list = async (userInfo, query) => {
 
   return {
     total,
-    data: { onewash: onewashPayments, residence: paymentsDataMap },
+    data: {
+      onewash: onewashPaymentsWithServiceType,
+      residence: paymentsDataMap,
+    },
     counts: {
       ...counts,
     },
@@ -164,51 +248,73 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
   if (jobData.mall) {
     mallData = await MallsModel.findOne({ _id: jobData.mall });
     amount_paid = payload.amount;
-    if (payload.payment_mode != "cash") {
-      // Updated tip calculation logic based on wash_type
-      let baseAmount;
+
+    // Calculate base amount and tip for both cash and card
+    let baseAmount;
+    if (payload.payment_mode === "cash") {
+      // Cash payment base amounts
       if (jobData.wash_type === "total") {
-        // Internal + External Wash
-        baseAmount = 31.5;
+        baseAmount = 31; // Internal + External Wash
       } else if (jobData.wash_type === "outside") {
-        // External Wash only
-        baseAmount = 21.5;
+        baseAmount = 21; // External Wash only
+      } else if (jobData.wash_type === "inside") {
+        baseAmount = 10; // Internal Wash only
+      } else {
+        // Fallback to mall's configured amount
+        baseAmount = mallData.amount || 0;
+      }
+    } else {
+      // Card payment base amounts (includes card charges)
+      if (jobData.wash_type === "total") {
+        baseAmount = 31.5; // Internal + External Wash
+      } else if (jobData.wash_type === "outside") {
+        baseAmount = 21.5; // External Wash only
       } else {
         // Fallback to existing logic for other types (inside, or undefined)
         baseAmount = mallData.amount + mallData.card_charges;
       }
-
-      if (payload.amount < baseAmount) {
-        throw "The amount entered is less than the required amount";
-      }
-      tip_amount =
-        payload.amount > baseAmount ? payload.amount - baseAmount : 0;
     }
+
+    if (payload.amount < baseAmount) {
+      throw "The amount entered is less than the required amount";
+    }
+    tip_amount = payload.amount > baseAmount ? payload.amount - baseAmount : 0;
   }
 
   if (jobData.building) {
     buildingData = await BuildingsModel.findOne({ _id: jobData.building });
     amount_paid = payload.amount;
-    if (payload.payment_mode != "cash") {
-      // Updated tip calculation logic based on wash_type
-      let baseAmount;
+
+    // Calculate base amount and tip for both cash and card
+    let baseAmount;
+    if (payload.payment_mode === "cash") {
+      // Cash payment base amounts
       if (jobData.wash_type === "total") {
-        // Internal + External Wash
-        baseAmount = 31.5;
+        baseAmount = 31; // Internal + External Wash
       } else if (jobData.wash_type === "outside") {
-        // External Wash only
-        baseAmount = 21.5;
+        baseAmount = 21; // External Wash only
+      } else if (jobData.wash_type === "inside") {
+        baseAmount = 10; // Internal Wash only
+      } else {
+        // Fallback to building's configured amount
+        baseAmount = buildingData.amount || 0;
+      }
+    } else {
+      // Card payment base amounts (includes card charges)
+      if (jobData.wash_type === "total") {
+        baseAmount = 31.5; // Internal + External Wash
+      } else if (jobData.wash_type === "outside") {
+        baseAmount = 21.5; // External Wash only
       } else {
         // Fallback to existing logic for other types (inside, or undefined)
         baseAmount = buildingData.amount + buildingData.card_charges;
       }
-
-      if (payload.amount < baseAmount) {
-        throw "The amount entered is less than the required amount";
-      }
-      tip_amount =
-        payload.amount > baseAmount ? payload.amount - baseAmount : 0;
     }
+
+    if (payload.amount < baseAmount) {
+      throw "The amount entered is less than the required amount";
+    }
+    tip_amount = payload.amount > baseAmount ? payload.amount - baseAmount : 0;
   }
 
   if (jobData.service_type == "mobile") {

@@ -324,9 +324,12 @@ service.jobCompleted = async (userInfo, id, payload) => {
 };
 
 service.jobRejected = async (userInfo, id, payload) => {
+  // Handle both rejectReason (from old app versions) and rejectionReason (schema field)
+  const rejectionReason = payload.rejectionReason || payload.rejectReason;
+
   const data = {
     status: "rejected",
-    ...payload,
+    rejectionReason: rejectionReason,
     completedDate: new Date(),
     updatedBy: userInfo._id,
   };

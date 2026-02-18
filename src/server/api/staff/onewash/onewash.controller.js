@@ -33,13 +33,11 @@ controller.create = async (req, res) => {
     return res.status(200).json({ statusCode: 200, message: "success", data });
   } catch (error) {
     if (error.code == 11000) {
-      return res
-        .status(409)
-        .json({
-          statusCode: 409,
-          message: "Oops! Location already exists",
-          error,
-        });
+      return res.status(409).json({
+        statusCode: 409,
+        message: "Oops! Location already exists",
+        error,
+      });
     }
     if (typeof error == "string") {
       return res.status(400).json({ statusCode: 400, message: error });
@@ -84,19 +82,8 @@ controller.undoDelete = async (req, res) => {
 
 controller.getPricing = async (req, res) => {
   try {
-    const { user } = req;
-    const data = await service.getPricing(user);
-    return res.status(200).json({ statusCode: 200, message: "success", data });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Internal server error", error });
-  }
-};
-
-controller.getPricing = async (req, res) => {
-  try {
-    const { user } = req;
-    const data = await service.getPricing(user);
+    const { user, query } = req;
+    const data = await service.getPricing(user, query.mallId);
     return res.status(200).json({ statusCode: 200, message: "success", data });
   } catch (error) {
     console.error(error);

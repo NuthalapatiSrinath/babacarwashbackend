@@ -237,18 +237,94 @@ service.list = async (userInfo, query) => {
     };
 
     // Add computed fields to each payment record
-    data = data.map((payment) => {
-      const isMonthEndClosed = (payment.notes || "")
-        .toLowerCase()
-        .includes("closed by month-end");
+    const PricingModel = require("../../models/pricing.model");
+    const OneWashModel = require("../../models/onewash.model");
 
-      return {
-        ...payment,
-        isMonthEndClosed, // Flag for month-end closed bills
-        paidAmount: payment.amount_paid || 0, // Already exists, but ensure it's present
-        balanceAmount: payment.balance || 0, // Already exists, but ensure it's present
-      };
-    });
+    data = await Promise.all(
+      data.map(async (payment) => {
+        const isMonthEndClosed = (payment.notes || "")
+          .toLowerCase()
+          .includes("closed by month-end");
+
+        // Compute display_service_type for onewash payments
+        let display_service_type = payment.service_type;
+        
+        if (payment.onewash) {
+          // Look up the OneWash job to get wash_type
+          let job = null;
+          
+          if (payment.job) {
+            job = await OneWashModel.findOne({
+              _id: payment.job,
+              isDeleted: false,
+            })
+              .select("wash_type service_type mall building")
+              .lean();
+          }
+          
+          // Fallback: find by worker + vehicle + date
+          if (!job && payment.vehicle?.registration_no && payment.worker) {
+            const paymentDate = new Date(payment.createdAt);
+            const startDate = new Date(paymentDate);
+            startDate.setHours(0, 0, 0, 0);
+            const endDate = new Date(paymentDate);
+            endDate.setHours(23, 59, 59, 999);
+            
+            job = await OneWashModel.findOne({
+              worker: typeof payment.worker === 'object' ? payment.worker._id : payment.worker,
+              registration_no: payment.vehicle.registration_no,
+              createdAt: { $gte: startDate, $lte: endDate },
+              isDeleted: false,
+            })
+              .select("wash_type service_type mall building")
+              .lean();
+          }
+          
+          if (job) {
+            if (job.service_type === "residence" || job.building) {
+              display_service_type = "Residence";
+            } else if (job.mall || payment.mall) {
+              const mallId = job.mall || 
+                (typeof payment.mall === "object" ? payment.mall._id : payment.mall);
+              
+              const pricing = await PricingModel.findOne({
+                mall: mallId,
+                isDeleted: false,
+              }).lean();
+
+              if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+                // Mall has wash types configured - show actual wash type
+                if (job.wash_type === "outside") {
+                  display_service_type = "EXTERNAL";
+                } else if (job.wash_type === "total") {
+                  display_service_type = "TOTAL";
+                } else if (job.wash_type === "inside") {
+                  display_service_type = "INTERNAL";
+                } else {
+                  display_service_type = "Mall";
+                }
+              } else {
+                // Mall not configured - show "Mall"
+                display_service_type = "Mall";
+              }
+            } else {
+              display_service_type = "Mall";
+            }
+          } else {
+            // Fallback if no job found
+            display_service_type = payment.building ? "Residence" : "Mall";
+          }
+        }
+
+        return {
+          ...payment,
+          display_service_type,
+          isMonthEndClosed, // Flag for month-end closed bills
+          paidAmount: payment.amount_paid || 0, // Already exists, but ensure it's present
+          balanceAmount: payment.balance || 0, // Already exists, but ensure it's present
+        };
+      }),
+    );
 
     console.log("✅ [SERVICE] Returning data with counts:", counts);
     return { total, data, counts };
@@ -596,6 +672,134 @@ service.exportData = async (userInfo, query) => {
     console.error("Export Populate Warning:", e.message);
   }
 
+  // 3.5. Compute display_service_type for onewash payments
+  const PricingModel = require("../../models/pricing.model");
+  const OneWashModel = require("../../models/onewash.model");
+  
+  console.log(`\n🔍 [EXPORT] Processing ${data.length} total payments`);
+  console.log(`🔍 [EXPORT] OneWash payments: ${data.filter(p => p.onewash).length}`);
+  
+  data = await Promise.all(
+    data.map(async (payment, index) => {
+      let display_service_type = "-";
+      let wash_type = null;
+
+      if (payment.onewash) {
+        console.log(`\n📋 [EXPORT] Payment ${index + 1}:`, {
+          paymentId: payment._id,
+          jobId: payment.job,
+          hasJob: !!payment.job,
+          mall: payment.mall?._id || payment.mall,
+          building: payment.building?._id || payment.building,
+          vehicle: payment.vehicle?.registration_no,
+          worker: payment.worker?._id,
+        });
+
+        // For OneWash payments, look up the job to get wash_type
+        let job = null;
+        
+        if (payment.job) {
+          job = await OneWashModel.findOne({
+            _id: payment.job,
+            isDeleted: false,
+          })
+            .select("wash_type service_type mall building")
+            .lean();
+        }
+        
+        // If job not found by ID, try to find by worker + vehicle + date range
+        if (!job && payment.vehicle?.registration_no && payment.worker) {
+          const paymentDate = new Date(payment.createdAt);
+          const startDate = new Date(paymentDate);
+          startDate.setHours(0, 0, 0, 0);
+          const endDate = new Date(paymentDate);
+          endDate.setHours(23, 59, 59, 999);
+          
+          job = await OneWashModel.findOne({
+            worker: typeof payment.worker === 'object' ? payment.worker._id : payment.worker,
+            registration_no: payment.vehicle.registration_no,
+            createdAt: { $gte: startDate, $lte: endDate },
+            isDeleted: false,
+          })
+            .select("wash_type service_type mall building")
+            .lean();
+            
+          if (job) {
+            console.log(`   ✅ Job found by fallback lookup`);
+          }
+        }
+
+        console.log(`   Job found:`, job ? {
+          wash_type: job.wash_type,
+          service_type: job.service_type,
+          mall: job.mall,
+          building: job.building,
+        } : 'NOT FOUND');
+
+        if (job) {
+          wash_type = job.wash_type;
+          
+          if (job.service_type === "residence" || job.building) {
+            display_service_type = "Residence";
+          } else if (job.mall) {
+            const mallId =
+              typeof job.mall === "object" ? job.mall._id : job.mall;
+            const pricing = await PricingModel.findOne({
+              mall: mallId,
+              isDeleted: false,
+            }).lean();
+
+            console.log(`   Pricing found:`, pricing ? {
+              hasSedanWashTypes: !!(pricing.sedan && pricing.sedan.wash_types),
+            } : 'NOT FOUND');
+
+            if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+              // Mall has wash types configured - show actual wash type
+              if (wash_type === "outside") {
+                display_service_type = "EXTERNAL";
+              } else if (wash_type === "total") {
+                display_service_type = "TOTAL";
+              } else if (wash_type === "inside") {
+                display_service_type = "INTERNAL";
+              } else {
+                display_service_type = "Mall";
+              }
+            } else {
+              // Mall not configured - show "Mall"
+              display_service_type = "Mall";
+            }
+            
+            console.log(`   ✅ Result: ${display_service_type}`);
+          } else {
+            display_service_type = "Mall";
+          }
+        } else {
+          // Job not found - fallback
+          display_service_type = payment.building ? "Residence" : "Mall";
+          console.log(`   ⚠️ Job not found, using fallback: ${display_service_type}`);
+        }
+      } else {
+        // Regular residence payments - use vehicle wash_type
+        display_service_type =
+          payment.vehicle?.wash_type === "outside"
+            ? "External Wash"
+            : payment.vehicle?.wash_type === "total"
+              ? "Internal + External"
+              : payment.vehicle?.wash_type === "inside"
+                ? "Internal Wash"
+                : "-";
+      }
+
+      return {
+        ...payment,
+        display_service_type,
+        wash_type, // Include wash_type for debugging
+      };
+    }),
+  );
+  
+  console.log(`\n✅ [EXPORT] Processing complete\n`);
+
   // 4. Generate Excel
   const workbook = new exceljs.Workbook();
   const worksheet = workbook.addWorksheet("Payments Report");
@@ -626,14 +830,7 @@ service.exportData = async (userInfo, query) => {
       time: moment(dateObj).format("hh:mm A"),
       vehicle: item.vehicle?.registration_no || "-",
       parking_no: item.vehicle?.parking_no || "-",
-      service_type:
-        item.vehicle?.wash_type === "outside"
-          ? "External Wash"
-          : item.vehicle?.wash_type === "total"
-            ? "Internal + External"
-            : item.vehicle?.wash_type === "inside"
-              ? "Internal Wash"
-              : "-",
+      service_type: item.display_service_type || "-",
       worker: item.worker?.name || "Unassigned",
       location: locationName,
       amount_paid: item.amount_paid || 0,

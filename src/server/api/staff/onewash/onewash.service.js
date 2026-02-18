@@ -84,6 +84,20 @@ service.create = async (userInfo, payload) => {
   if (payload.mall == "") delete payload.mall;
   if (payload.building == "") delete payload.building;
 
+  // ✅ For residence jobs, remove wash_type and mall
+  if (payload.service_type === "residence") {
+    delete payload.wash_type;
+    delete payload.mall;
+  }
+
+  // ✅ For mall jobs, remove building and ensure wash_type has a default
+  if (payload.service_type === "mall") {
+    delete payload.building;
+    if (!payload.wash_type) {
+      payload.wash_type = "inside";
+    }
+  }
+
   if (payload.mall) {
     const PricingModel = require("../../models/pricing.model");
 
@@ -205,7 +219,28 @@ service.create = async (userInfo, payload) => {
 };
 
 service.update = async (userInfo, id, payload) => {
-  await OneWashModel.updateOne({ _id: id }, { $set: payload });
+  // ✅ Clean up payload based on service_type
+  const updatePayload = { ...payload };
+
+  // For residence jobs, remove wash_type and mall
+  if (updatePayload.service_type === "residence") {
+    delete updatePayload.wash_type;
+    delete updatePayload.mall;
+  }
+
+  // For mall jobs, remove building and ensure wash_type
+  if (updatePayload.service_type === "mall") {
+    delete updatePayload.building;
+    if (!updatePayload.wash_type) {
+      updatePayload.wash_type = "inside";
+    }
+  }
+
+  // Clean empty strings
+  if (updatePayload.mall === "") delete updatePayload.mall;
+  if (updatePayload.building === "") delete updatePayload.building;
+
+  await OneWashModel.updateOne({ _id: id }, { $set: updatePayload });
 };
 
 service.delete = async (userInfo, id, payload) => {
@@ -222,34 +257,32 @@ service.undoDelete = async (userInfo, id) => {
   );
 };
 
-service.getPricing = async (userInfo) => {
+service.getPricing = async (userInfo, mallId = null) => {
   const PricingModel = require("../../models/pricing.model");
 
-  console.log("🔍 [BACKEND] getPricing called for user:", {
+  console.log("🔍 [BACKEND] getPricing called:", {
     service_type: userInfo.service_type,
-    mall: userInfo.mall,
-    malls: userInfo.malls,
-    userId: userInfo._id,
-    name: userInfo.name,
+    providedMallId: mallId,
+    userMalls: userInfo.malls,
+    userName: userInfo.name,
   });
 
   // Get pricing based on user's service type
   let query = { isDeleted: false, service_type: userInfo.service_type };
 
-  // Handle mall assignment - check both mall (single) and malls (array)
+  // Handle mall assignment
   if (userInfo.service_type === "mall") {
-    const mallId =
+    // Use provided mallId, or fallback to user's first assigned mall
+    const targetMallId =
+      mallId ||
       userInfo.mall ||
       (userInfo.malls && userInfo.malls.length > 0 ? userInfo.malls[0] : null);
 
-    if (mallId) {
-      query.mall = mallId;
-      console.log("✅ [BACKEND] Using mall ID:", mallId);
+    if (targetMallId) {
+      query.mall = targetMallId;
+      console.log("✅ [BACKEND] Fetching pricing for mall ID:", targetMallId);
     } else {
-      console.log(
-        "⚠️ [BACKEND] WARNING: Mall worker has no mall assigned! Full userInfo:",
-        JSON.stringify(userInfo, null, 2),
-      );
+      console.log("⚠️ [BACKEND] No mall ID provided or assigned");
     }
   }
 
@@ -257,7 +290,7 @@ service.getPricing = async (userInfo) => {
 
   const pricing = await PricingModel.findOne(query).lean();
 
-  console.log("💰 [BACKEND] Pricing found:", JSON.stringify(pricing, null, 2));
+  console.log("💰 [BACKEND] Pricing found:", pricing ? "Yes" : "No");
 
   return pricing;
 };
