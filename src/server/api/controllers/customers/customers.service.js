@@ -1426,7 +1426,7 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
         // If all vehicles exist, don't create customer at all
         const vehiclesToAdd = [];
         let hasExistingVehicles = false;
-        
+
         for (const newVehicle of customerData.vehicles) {
           // Check if vehicle exists with ANY customer
           const otherCustomerWithVehicle = await CustomersModel.findOne({

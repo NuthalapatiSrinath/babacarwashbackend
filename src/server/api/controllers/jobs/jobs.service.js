@@ -508,20 +508,32 @@ service.monthlyStatement = async (userInfo, query) => {
         // Convert schedule_days to day names (handle string or array format)
         let scheduleDays = [];
         if (vehicle.schedule_days) {
+          // Comprehensive day name mapping (handles both short and full names)
+          const normalizeDayName = (dayStr) => {
+            const dayMap = {
+              sun: "sunday",
+              sunday: "sunday",
+              mon: "monday",
+              monday: "monday",
+              tue: "tuesday",
+              tuesday: "tuesday",
+              wed: "wednesday",
+              wednesday: "wednesday",
+              thu: "thursday",
+              thursday: "thursday",
+              fri: "friday",
+              friday: "friday",
+              sat: "saturday",
+              saturday: "saturday",
+            };
+            return dayMap[dayStr.toLowerCase()] || "";
+          };
+
           // Handle string format: "Tue,Thu,Sat,Sun"
           if (typeof vehicle.schedule_days === "string") {
-            const dayMap = {
-              Mon: "monday",
-              Tue: "tuesday",
-              Wed: "wednesday",
-              Thu: "thursday",
-              Fri: "friday",
-              Sat: "saturday",
-              Sun: "sunday",
-            };
             scheduleDays = vehicle.schedule_days
               .split(",")
-              .map((d) => dayMap[d.trim()] || d.trim().toLowerCase())
+              .map((d) => normalizeDayName(d.trim()))
               .filter((d) => d);
           }
           // Handle array format
@@ -529,35 +541,16 @@ service.monthlyStatement = async (userInfo, query) => {
             scheduleDays = vehicle.schedule_days
               .flatMap((d) => {
                 if (typeof d === "object" && d.day) {
-                  const dayMap = {
-                    Mon: "monday",
-                    Tue: "tuesday",
-                    Wed: "wednesday",
-                    Thu: "thursday",
-                    Fri: "friday",
-                    Sat: "saturday",
-                    Sun: "sunday",
-                  };
-                  return dayMap[d.day] || d.day.toLowerCase();
+                  return normalizeDayName(d.day);
                 }
                 // If array element is a comma-separated string like "Mon,Wed,Fri"
                 if (typeof d === "string" && d.includes(",")) {
-                  const dayMap = {
-                    Mon: "monday",
-                    Tue: "tuesday",
-                    Wed: "wednesday",
-                    Thu: "thursday",
-                    Fri: "friday",
-                    Sat: "saturday",
-                    Sun: "sunday",
-                  };
                   return d
                     .split(",")
-                    .map(
-                      (day) => dayMap[day.trim()] || day.trim().toLowerCase(),
-                    );
+                    .map((day) => normalizeDayName(day.trim()));
                 }
-                return typeof d === "string" ? d.toLowerCase() : "";
+                // Single string day name
+                return typeof d === "string" ? normalizeDayName(d) : "";
               })
               .filter((d) => d);
           }
