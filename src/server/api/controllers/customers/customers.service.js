@@ -42,45 +42,38 @@ service.list = async (userInfo, query) => {
 
   // Add Worker Filter (worker is on vehicle level)
   // Use $elemMatch to ensure at least one vehicle has this specific worker assigned (not null)
-  if (query.worker) {
-    if (query.worker === "__ANY_WORKER__") {
-      // Special case: show only customers with at least one vehicle that has ANY worker assigned
+  if (query.worker && query.worker !== "__ANY_WORKER__") {
+    // ✅ FIX: Skip filter when __ANY_WORKER__ is selected (show ALL customers)
+    // Specific worker filter - handle both ObjectId and string comparison
+    const workerString = query.worker.toString();
+    const workerObjectId = mongoose.Types.ObjectId.isValid(query.worker)
+      ? new mongoose.Types.ObjectId(query.worker)
+      : null;
+
+    // Match either string or ObjectId representation
+    if (workerObjectId) {
       findQuery.vehicles = {
         $elemMatch: {
-          worker: { $exists: true, $ne: null },
+          $or: [{ worker: workerObjectId }, { worker: workerString }],
         },
       };
-      console.log("👷 [CUSTOMER LIST] Filtering by ANY worker assigned");
     } else {
-      // Specific worker filter - handle both ObjectId and string comparison
-      const workerString = query.worker.toString();
-      const workerObjectId = mongoose.Types.ObjectId.isValid(query.worker)
-        ? new mongoose.Types.ObjectId(query.worker)
-        : null;
-
-      // Match either string or ObjectId representation
-      if (workerObjectId) {
-        findQuery.vehicles = {
-          $elemMatch: {
-            $or: [{ worker: workerObjectId }, { worker: workerString }],
-          },
-        };
-      } else {
-        findQuery.vehicles = {
-          $elemMatch: {
-            worker: workerString,
-          },
-        };
-      }
-      console.log(
-        "👷 [CUSTOMER LIST] Filtering by specific worker:",
-        query.worker,
-        "String:",
-        workerString,
-        "ObjectId:",
-        workerObjectId,
-      );
+      findQuery.vehicles = {
+        $elemMatch: {
+          worker: workerString,
+        },
+      };
     }
+    console.log(
+      "👷 [CUSTOMER LIST] Filtering by specific worker:",
+      query.worker,
+      "String:",
+      workerString,
+      "ObjectId:",
+      workerObjectId,
+    );
+  } else if (query.worker === "__ANY_WORKER__") {
+    console.log("👷 [CUSTOMER LIST] Showing ALL customers (no worker filter)");
   }
 
   if (search) {
@@ -730,6 +723,7 @@ service.importData = async (userInfo, excelData) => {
         ...(location ? { location: location._id } : null),
         ...(building ? { building: building._id } : null),
         imported: true,
+        status: 1, // ✅ FIX: Set active status for imported customers
       };
     },
     vehicle: (data, worker) => {

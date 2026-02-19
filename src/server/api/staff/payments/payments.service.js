@@ -246,11 +246,14 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
   let tip_amount = 0;
 
   // ✅ FIX: For RESIDENCE jobs, NO tip calculation - full amount goes to amount_paid
-  if (jobData.service_type === "residence" || (jobData.building && !jobData.mall)) {
+  if (
+    jobData.service_type === "residence" ||
+    (jobData.building && !jobData.mall)
+  ) {
     buildingData = await BuildingsModel.findOne({ _id: jobData.building });
     amount_paid = payload.amount;
     tip_amount = 0; // No tips for residence
-    
+
     console.log("🏠 [RESIDENCE] No tip calculation:", {
       service_type: jobData.service_type,
       amount_paid,
@@ -292,7 +295,7 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
       throw "The amount entered is less than the required amount";
     }
     tip_amount = payload.amount > baseAmount ? payload.amount - baseAmount : 0;
-    
+
     console.log("🏢 [MALL] Tip calculated:", {
       service_type: jobData.service_type,
       wash_type: jobData.wash_type,
