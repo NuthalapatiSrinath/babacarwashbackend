@@ -156,11 +156,18 @@ service.list = async (userInfo, query) => {
     `📊 [DEBUG] Status counts - Number(1): ${status1Count}, Number(2): ${status2Count}, String("1"): ${statusStringCount}`,
   );
 
-  // Fetch Data
+  // ⚡ OPTIMIZED: Fetch Data with populate (single query instead of N+1)
   let data = await CustomersModel.find(findQuery)
     .sort({ _id: -1 })
     .skip(paginationData.skip)
     .limit(paginationData.limit)
+    .populate({
+      path: "building",
+      match: { isDeleted: false },
+      populate: {
+        path: "location_id",
+      },
+    })
     .lean();
 
   console.log("\n🔍 [DEBUG] First 3 customers returned from query:");
@@ -175,32 +182,42 @@ service.list = async (userInfo, query) => {
     });
   });
 
-  // Populate References (Building & Worker)
-  for (let customer of data) {
-    if (customer.building) {
-      const building = await BuildingsModel.findOne({
-        _id: customer.building,
-        isDeleted: false,
-      })
-        .populate("location_id")
-        .lean();
-      customer.building = building || null;
-    }
-
-    if (customer.vehicles && customer.vehicles.length > 0) {
-      for (let vehicle of customer.vehicles) {
-        if (vehicle.worker) {
-          const worker = await WorkersModel.findOne({
-            _id: vehicle.worker,
-            isDeleted: false,
-          }).lean();
-          vehicle.worker = worker || null;
-        }
+  // ⚡ OPTIMIZED: Bulk populate workers for all vehicles in a single query
+  const allWorkerIds = new Set();
+  data.forEach((customer) => {
+    customer.vehicles?.forEach((vehicle) => {
+      if (vehicle.worker) {
+        allWorkerIds.add(vehicle.worker.toString());
       }
+    });
+  });
+
+  // Fetch all workers in one query
+  const workerMap = {};
+  if (allWorkerIds.size > 0) {
+    const workers = await WorkersModel.find({
+      _id: { $in: Array.from(allWorkerIds) },
+      isDeleted: false,
+    }).lean();
+
+    workers.forEach((worker) => {
+      workerMap[worker._id.toString()] = worker;
+    });
+  }
+
+  // Assign populated workers to vehicles
+  data.forEach((customer) => {
+    if (customer.vehicles && customer.vehicles.length > 0) {
+      customer.vehicles.forEach((vehicle) => {
+        if (vehicle.worker) {
+          const workerId = vehicle.worker.toString();
+          vehicle.worker = workerMap[workerId] || null;
+        }
+      });
       // ✅ Don't filter vehicles by status - show all vehicles regardless of customer status
       // Vehicle status is independent and managed separately
     }
-  }
+  });
 
   // Add pending dues for each customer and vehicle - OPTIMIZED with bulk query
   console.log(

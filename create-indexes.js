@@ -37,15 +37,22 @@ async function createIndexes() {
     await db.collection('payments').createIndex({ isDeleted: 1, worker: 1, status: 1 });
     await db.collection('payments').createIndex({ isDeleted: 1, job: 1 });
     await db.collection('payments').createIndex({ isDeleted: 1, onewash: 1, status: 1 });
+    await db.collection('payments').createIndex({ customer: 1, isDeleted: 1, status: 1 }); // Customer pending dues query
+    await db.collection('payments').createIndex({ customer: 1, status: 1, collectedDate: -1 }); // Last payment query
     await db.collection('payments').createIndex({ status: 1, createdAt: -1 });
     console.log('✅ Payments indexes created');
     
     // ========== CUSTOMERS COLLECTION INDEXES ==========
     console.log('📊 Creating Customers indexes...');
     await db.collection('customers').createIndex({ isDeleted: 1, status: 1 });
-    await db.collection('customers').createIndex({ isDeleted: 1, building: 1 });
+    await db.collection('customers').createIndex({ building: 1, isDeleted: 1, status: 1 });
+    await db.collection('customers').createIndex({ mobile: 1 });
+    await db.collection('customers').createIndex({ firstName: 1, lastName: 1 });
+    await db.collection('customers').createIndex({ 'vehicles.registration_no': 1 });
+    await db.collection('customers').createIndex({ 'vehicles.parking_no': 1 });
+    await db.collection('customers').createIndex({ 'vehicles.worker': 1 });
     await db.collection('customers').createIndex({ isDeleted: 1, createdAt: -1 });
-    console.log('✅ Customers indexes created');
+    console.log('✅ Customers indexes created (optimized for search & filters)');
     
     // ========== WORKERS COLLECTION INDEXES ==========
     console.log('📊 Creating Workers indexes...');

@@ -58,4 +58,13 @@ const schema = new mongoose.Schema(
   },
 );
 
+// ⚡ PERFORMANCE: Add indexes for fast queries
+schema.index({ isDeleted: 1, status: 1 }); // Most common filter
+schema.index({ building: 1, isDeleted: 1, status: 1 }); // Building filter
+schema.index({ mobile: 1 }); // Search by mobile
+schema.index({ firstName: 1, lastName: 1 }); // Search by name
+schema.index({ "vehicles.registration_no": 1 }); // Search by vehicle
+schema.index({ "vehicles.parking_no": 1 }); // Search by parking
+schema.index({ "vehicles.worker": 1 }); // Worker filter
+
 module.exports = mongoose.model("customers", schema);
