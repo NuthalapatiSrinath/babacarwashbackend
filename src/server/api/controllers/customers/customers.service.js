@@ -1405,7 +1405,8 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
       let workerDoc = null;
 
       if (row.location) {
-        locationDoc = await LocationsModel.findOne({
+        // Find ALL matching locations (handles duplicate location names with different casing)
+        const matchingLocations = await LocationsModel.find({
           isDeleted: false,
           address: {
             $regex: new RegExp(
@@ -1414,9 +1415,11 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
             ),
           },
         }).lean();
-        if (!locationDoc) {
+        if (!matchingLocations.length) {
           throw new Error(`Location "${row.location}" not found in the system`);
         }
+        // Default to the first match
+        locationDoc = matchingLocations[0];
       }
 
       if (row.building) {
@@ -1425,6 +1428,19 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
             `Building "${row.building}" specified but Location is missing. Please provide Location first.`,
           );
         }
+
+        // Find ALL matching locations to search across all of them for the building
+        const matchingLocations = await LocationsModel.find({
+          isDeleted: false,
+          address: {
+            $regex: new RegExp(
+              `^${row.location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+              "i",
+            ),
+          },
+        }).lean();
+        const locationIds = matchingLocations.map((l) => l._id.toString());
+
         buildingDoc = await BuildingsModel.findOne({
           isDeleted: false,
           name: {
@@ -1433,12 +1449,21 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
               "i",
             ),
           },
-          ...(locationDoc ? { location_id: locationDoc._id } : {}),
+          ...(locationIds.length > 0
+            ? { location_id: { $in: locationIds } }
+            : {}),
         }).lean();
         if (!buildingDoc) {
           throw new Error(
             `Building "${row.building}" not found under location "${row.location}"`,
           );
+        }
+        // Update locationDoc to the one that actually matches the building
+        const matchedLocation = matchingLocations.find(
+          (l) => l._id.toString() === buildingDoc.location_id.toString(),
+        );
+        if (matchedLocation) {
+          locationDoc = matchedLocation;
         }
       }
 
