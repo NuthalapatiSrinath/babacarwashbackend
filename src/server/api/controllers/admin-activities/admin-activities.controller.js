@@ -3,12 +3,157 @@
 const AdminActivityModel = require("../../models/admin-activity.model");
 const UserModel = require("../../models/users.model");
 const mongoose = require("mongoose");
+const axios = require("axios");
 
 const controller = module.exports;
+
+/* ── IP Geolocation cache (in-memory, avoids hitting API for same IP repeatedly) ── */
+const geoCache = new Map();
+const GEO_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+let cachedPublicIP = null;
+let publicIPFetchedAt = 0;
+
+function isLocalIP(ip) {
+  return (
+    !ip ||
+    ip === "::1" ||
+    ip === "127.0.0.1" ||
+    ip === "::ffff:127.0.0.1" ||
+    ip.startsWith("192.168.") ||
+    ip.startsWith("10.") ||
+    ip.startsWith("172.16.") ||
+    ip.startsWith("172.17.") ||
+    ip.startsWith("172.18.") ||
+    ip.startsWith("172.19.") ||
+    ip.startsWith("172.2") ||
+    ip.startsWith("172.30.") ||
+    ip.startsWith("172.31.") ||
+    ip.startsWith("::ffff:192.168.") ||
+    ip.startsWith("::ffff:10.") ||
+    ip === "localhost"
+  );
+}
+
+async function getPublicIP() {
+  // Cache public IP for 1 hour
+  if (cachedPublicIP && Date.now() - publicIPFetchedAt < 60 * 60 * 1000) {
+    return cachedPublicIP;
+  }
+  try {
+    const { data } = await axios.get("https://api.ipify.org?format=json", {
+      timeout: 3000,
+    });
+    if (data && data.ip) {
+      cachedPublicIP = data.ip;
+      publicIPFetchedAt = Date.now();
+      return data.ip;
+    }
+  } catch (err) {
+    // Fallback: ip-api.com without IP param returns caller's info
+    try {
+      const { data } = await axios.get(
+        "http://ip-api.com/json/?fields=query",
+        { timeout: 3000 },
+      );
+      if (data && data.query) {
+        cachedPublicIP = data.query;
+        publicIPFetchedAt = Date.now();
+        return data.query;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+async function getGeoFromIP(ip) {
+  // If local/private IP, resolve to the server's actual public IP
+  let resolvedIP = ip;
+  if (isLocalIP(ip)) {
+    const pubIP = await getPublicIP();
+    if (pubIP) {
+      resolvedIP = pubIP;
+    } else {
+      return {
+        city: "Local",
+        region: "",
+        country: "Local",
+        isp: "",
+        timezone: "",
+      };
+    }
+  }
+
+  const cached = geoCache.get(resolvedIP);
+  if (cached && Date.now() - cached.ts < GEO_CACHE_TTL) {
+    return cached.data;
+  }
+
+  try {
+    const { data } = await axios.get(
+      `http://ip-api.com/json/${resolvedIP}?fields=status,city,regionName,country,isp,timezone,query`,
+      { timeout: 3000 },
+    );
+    if (data.status === "success") {
+      const geo = {
+        city: data.city || "",
+        region: data.regionName || "",
+        country: data.country || "",
+        isp: data.isp || "",
+        timezone: data.timezone || "",
+      };
+      geoCache.set(resolvedIP, { data: geo, ts: Date.now() });
+      return geo;
+    }
+  } catch (err) {
+    // Silently fail — geo is nice-to-have
+  }
+  return { city: "", region: "", country: "", isp: "", timezone: "" };
+}
+
+/* ── Reverse geocode lat/lng → full address (Nominatim, free) ── */
+const reverseGeoCache = new Map();
+async function reverseGeocode(lat, lng) {
+  const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+  const cached = reverseGeoCache.get(key);
+  if (cached && Date.now() - cached.ts < GEO_CACHE_TTL) return cached.data;
+
+  try {
+    const { data } = await axios.get(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&addressdetails=1&zoom=18`,
+      {
+        timeout: 5000,
+        headers: {
+          "User-Agent": "BCW-AdminTracker/1.0",
+          "Accept-Language": "en",
+        },
+      },
+    );
+    if (data && data.display_name) {
+      const ad = data.address || {};
+      const result = {
+        fullAddress: data.display_name,
+        road: ad.road || ad.street || "",
+        neighbourhood: ad.neighbourhood || ad.suburb || "",
+        city: ad.city || ad.town || ad.village || ad.county || "",
+        state: ad.state || "",
+        postcode: ad.postcode || "",
+        country: ad.country || "",
+      };
+      reverseGeoCache.set(key, { data: result, ts: Date.now() });
+      return result;
+    }
+  } catch (err) {
+    // Silently fail
+  }
+  return null;
+}
 
 /* ── POST /batch — receive batch of activities from admin panel ── */
 controller.trackBatch = async (req, res) => {
   try {
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ status: false, message: "Not authorized" });
+    }
     const adminId = req.user._id;
     const { activities } = req.body;
 
@@ -18,24 +163,44 @@ controller.trackBatch = async (req, res) => {
         .json({ status: false, message: "No activities provided" });
     }
 
-    const ip =
+    const rawIP =
       req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
       req.connection?.remoteAddress ||
       req.ip;
 
-    const docs = activities.map((a) => ({
-      admin: adminId,
-      sessionId: a.sessionId,
-      activityType: a.activityType || "other",
-      page: a.page || {},
-      action: a.action || {},
-      scroll: a.scroll || {},
-      device: a.device || {},
-      location: { ip, ...(a.location || {}) },
-      duration: a.duration || null,
-      timestamp: a.timestamp ? new Date(a.timestamp) : new Date(),
-      metadata: a.metadata || {},
-    }));
+    // Resolve IP to location (cached, non-blocking best-effort)
+    // If local IP, getGeoFromIP resolves the actual public IP
+    const geo = await getGeoFromIP(rawIP);
+    // Use the real public IP in location, not the local one
+    const displayIP = isLocalIP(rawIP) ? (cachedPublicIP || rawIP) : rawIP;
+
+    // Check if frontend sent GPS coords — do server-side reverse geocode as fallback
+    const firstLoc = activities[0]?.location;
+    let serverGeoAddress = null;
+    if (firstLoc && firstLoc.lat && firstLoc.lng && !firstLoc.fullAddress) {
+      serverGeoAddress = await reverseGeocode(firstLoc.lat, firstLoc.lng);
+    }
+
+    const docs = activities.map((a) => {
+      const loc = { ip: displayIP, ...geo, ...(a.location || {}) };
+      // Merge server-side reverse geocode if frontend didn't supply fullAddress
+      if (serverGeoAddress && !loc.fullAddress) {
+        Object.assign(loc, serverGeoAddress);
+      }
+      return {
+        admin: adminId,
+        sessionId: a.sessionId,
+        activityType: a.activityType || "other",
+        page: a.page || {},
+        action: a.action || {},
+        scroll: a.scroll || {},
+        device: a.device || {},
+        location: loc,
+        duration: a.duration || null,
+        timestamp: a.timestamp ? new Date(a.timestamp) : new Date(),
+        metadata: a.metadata || {},
+      };
+    });
 
     await AdminActivityModel.insertMany(docs, { ordered: false });
 
@@ -306,6 +471,9 @@ async function fetchAdminTrackingData(
             },
           },
           isMobile: { $first: "$device.isMobile" },
+          language: { $first: { $ifNull: ["$device.language", "—"] } },
+          platform: { $first: { $ifNull: ["$device.platform", "—"] } },
+          userAgent: { $first: { $ifNull: ["$device.userAgent", ""] } },
           totalActivities: { $sum: 1 },
           sessions: { $addToSet: "$sessionId" },
           logins: {
@@ -335,6 +503,13 @@ async function fetchAdminTrackingData(
           lastSeen: { $max: "$timestamp" },
           firstSeen: { $min: "$timestamp" },
           ips: { $addToSet: "$location.ip" },
+          cities: { $addToSet: "$location.city" },
+          countries: { $addToSet: "$location.country" },
+          regions: { $addToSet: "$location.region" },
+          isps: { $addToSet: "$location.isp" },
+          fullAddresses: { $addToSet: "$location.fullAddress" },
+          latitudes: { $addToSet: "$location.lat" },
+          longitudes: { $addToSet: "$location.lng" },
         },
       },
       {
@@ -347,6 +522,9 @@ async function fetchAdminTrackingData(
           screenResolution: 1,
           deviceLabel: 1,
           isMobile: 1,
+          language: 1,
+          platform: 1,
+          userAgent: 1,
           totalActivities: 1,
           sessionCount: { $size: "$sessions" },
           logins: 1,
@@ -356,6 +534,13 @@ async function fetchAdminTrackingData(
           lastSeen: 1,
           firstSeen: 1,
           ips: 1,
+          cities: 1,
+          countries: 1,
+          regions: 1,
+          isps: 1,
+          fullAddresses: 1,
+          latitudes: 1,
+          longitudes: 1,
         },
       },
       { $sort: { lastSeen: -1 } },
@@ -394,6 +579,9 @@ async function fetchAdminTrackingData(
 /* ── GET /my-tracking — admin's own tracking data ── */
 controller.getMyTracking = async (req, res) => {
   try {
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ status: false, message: "Not authorized" });
+    }
     const {
       dateRange = "all",
       page = 1,
