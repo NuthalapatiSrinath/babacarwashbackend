@@ -112,32 +112,36 @@ async function fetchAdminTrackingData(
   };
   // Base filter without device — used for the devices aggregation itself
   const baseFilterNoDevice = { ...adminFilter };
-  // Base filter with optional device — match either deviceId field or fallback browser_platform combo
-  const baseFilter = deviceId
-    ? {
+
+  // Build device filter: match deviceId field directly, OR for old records
+  // match the fallback browser_platform_type key
+  let baseFilter = adminFilter;
+  if (deviceId) {
+    // First check if this looks like a fallback key (contains underscores like Chrome_Win32_desktop)
+    // or a real deviceId (base64-ish alphanumeric)
+    const isFallbackKey = deviceId.includes("_");
+    if (isFallbackKey) {
+      // Parse the fallback key: browser_platform_mobile/desktop
+      const parts = deviceId.split("_");
+      const browser = parts[0] || "Unknown";
+      const platform = parts.slice(1, -1).join("_") || "Unknown";
+      const isMobile = parts[parts.length - 1] === "mobile";
+      baseFilter = {
         ...adminFilter,
         $or: [
           { "device.deviceId": deviceId },
           {
+            "device.browser": browser,
+            "device.platform": platform,
+            "device.isMobile": isMobile,
             "device.deviceId": { $exists: false },
-            $expr: {
-              $eq: [
-                {
-                  $concat: [
-                    { $ifNull: ["$device.browser", "Unknown"] },
-                    "_",
-                    { $ifNull: ["$device.platform", "Unknown"] },
-                    "_",
-                    { $cond: [{ $ifNull: ["$device.isMobile", false] }, "mobile", "desktop"] },
-                  ],
-                },
-                deviceId,
-              ],
-            },
           },
         ],
-      }
-    : adminFilter;
+      };
+    } else {
+      baseFilter = { ...adminFilter, "device.deviceId": deviceId };
+    }
+  }
 
   const [
     adminInfo,
@@ -251,7 +255,13 @@ async function fetchAdminTrackingData(
                   "_",
                   { $ifNull: ["$device.platform", "Unknown"] },
                   "_",
-                  { $cond: [{ $ifNull: ["$device.isMobile", false] }, "mobile", "desktop"] },
+                  {
+                    $cond: [
+                      { $ifNull: ["$device.isMobile", false] },
+                      "mobile",
+                      "desktop",
+                    ],
+                  },
                 ],
               },
             ],
@@ -261,14 +271,22 @@ async function fetchAdminTrackingData(
       {
         $group: {
           _id: "$_deviceKey",
-          deviceId: { $first: { $ifNull: ["$device.deviceId", "$_deviceKey"] } },
+          deviceId: {
+            $first: { $ifNull: ["$device.deviceId", "$_deviceKey"] },
+          },
           browser: { $first: "$device.browser" },
           os: { $first: { $ifNull: ["$device.os", "$device.platform"] } },
           deviceType: {
             $first: {
               $ifNull: [
                 "$device.deviceType",
-                { $cond: [{ $ifNull: ["$device.isMobile", false] }, "Mobile", "Desktop"] },
+                {
+                  $cond: [
+                    { $ifNull: ["$device.isMobile", false] },
+                    "Mobile",
+                    "Desktop",
+                  ],
+                },
               ],
             },
           },
