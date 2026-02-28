@@ -1,17 +1,20 @@
-'use strict'
+"use strict";
 
-const mongoose = require('mongoose');
-const schema = new mongoose.Schema({
+const mongoose = require("mongoose");
+const schema = new mongoose.Schema(
+  {
     id: { type: Number },
-    address: { type: String },
-    createdBy: { type: String, required: true, ref: 'users' },
+    address: { type: String, trim: true },
+    createdBy: { type: String, required: true, ref: "users" },
     updatedBy: { type: String, required: true },
     deletedBy: { type: String },
     isDeleted: { type: Boolean, default: false },
-}, {
+  },
+  {
     versionKey: false,
     strict: false,
-    timestamps: true
-});
+    timestamps: true,
+  },
+);
 
-module.exports = mongoose.model('locations', schema);
+module.exports = mongoose.model("locations", schema);

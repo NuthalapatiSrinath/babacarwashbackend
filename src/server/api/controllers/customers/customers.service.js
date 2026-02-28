@@ -1420,13 +1420,14 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
 
       if (row.location) {
         // Find ALL matching locations (handles duplicate location names with different casing)
+        // Use \s* around the value to handle leading/trailing whitespace in DB values
+        const locationSearchTerm = row.location
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const matchingLocations = await LocationsModel.find({
           isDeleted: false,
           address: {
-            $regex: new RegExp(
-              `^${row.location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-              "i",
-            ),
+            $regex: new RegExp(`^\\s*${locationSearchTerm}\\s*$`, "i"),
           },
         }).lean();
         if (!matchingLocations.length) {
@@ -1444,24 +1445,24 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
         }
 
         // Find ALL matching locations to search across all of them for the building
+        const locSearchTerm2 = row.location
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const matchingLocations = await LocationsModel.find({
           isDeleted: false,
           address: {
-            $regex: new RegExp(
-              `^${row.location.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-              "i",
-            ),
+            $regex: new RegExp(`^\\s*${locSearchTerm2}\\s*$`, "i"),
           },
         }).lean();
         const locationIds = matchingLocations.map((l) => l._id.toString());
 
+        const buildingSearchTerm = row.building
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         buildingDoc = await BuildingsModel.findOne({
           isDeleted: false,
           name: {
-            $regex: new RegExp(
-              `^${row.building.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-              "i",
-            ),
+            $regex: new RegExp(`^\\s*${buildingSearchTerm}\\s*$`, "i"),
           },
           ...(locationIds.length > 0
             ? { location_id: { $in: locationIds } }
@@ -1487,13 +1488,13 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
             `Worker "${row.worker}" specified but Building is missing. Please provide Building first.`,
           );
         }
+        const workerSearchTerm = row.worker
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         workerDoc = await WorkersModel.findOne({
           isDeleted: false,
           name: {
-            $regex: new RegExp(
-              `^${row.worker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
-              "i",
-            ),
+            $regex: new RegExp(`^\\s*${workerSearchTerm}\\s*$`, "i"),
           },
           ...(buildingDoc ? { buildings: buildingDoc._id } : {}),
         }).lean();
