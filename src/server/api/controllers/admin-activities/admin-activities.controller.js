@@ -96,6 +96,7 @@ async function fetchAdminTrackingData(
   endDate,
   startTime,
   endTime,
+  deviceId,
 ) {
   const skip = (parseInt(page) - 1) * parseInt(limit);
   const dateFilter = buildDateFilter(
@@ -105,10 +106,38 @@ async function fetchAdminTrackingData(
     startTime,
     endTime,
   );
-  const baseFilter = {
+  const adminFilter = {
     admin: new mongoose.Types.ObjectId(adminId),
     ...dateFilter,
   };
+  // Base filter without device — used for the devices aggregation itself
+  const baseFilterNoDevice = { ...adminFilter };
+  // Base filter with optional device — match either deviceId field or fallback browser_platform combo
+  const baseFilter = deviceId
+    ? {
+        ...adminFilter,
+        $or: [
+          { "device.deviceId": deviceId },
+          {
+            "device.deviceId": { $exists: false },
+            $expr: {
+              $eq: [
+                {
+                  $concat: [
+                    { $ifNull: ["$device.browser", "Unknown"] },
+                    "_",
+                    { $ifNull: ["$device.platform", "Unknown"] },
+                    "_",
+                    { $cond: [{ $ifNull: ["$device.isMobile", false] }, "mobile", "desktop"] },
+                  ],
+                },
+                deviceId,
+              ],
+            },
+          },
+        ],
+      }
+    : adminFilter;
 
   const [
     adminInfo,
@@ -124,7 +153,8 @@ async function fetchAdminTrackingData(
     activityByHour,
     activityByDay,
     topPages,
-    deviceAgg,
+    deviceLatest,
+    devicesAgg,
     timeline,
     totalCount,
   ] = await Promise.all([
@@ -206,6 +236,112 @@ async function fetchAdminTrackingData(
       .select("device location")
       .sort({ timestamp: -1 })
       .lean(),
+    // Devices aggregation — always use baseFilterNoDevice so we list ALL devices regardless of current filter
+    // Uses deviceId if available, falls back to browser+platform for old data
+    AdminActivityModel.aggregate([
+      { $match: baseFilterNoDevice },
+      {
+        $addFields: {
+          _deviceKey: {
+            $ifNull: [
+              "$device.deviceId",
+              {
+                $concat: [
+                  { $ifNull: ["$device.browser", "Unknown"] },
+                  "_",
+                  { $ifNull: ["$device.platform", "Unknown"] },
+                  "_",
+                  { $cond: [{ $ifNull: ["$device.isMobile", false] }, "mobile", "desktop"] },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$_deviceKey",
+          deviceId: { $first: { $ifNull: ["$device.deviceId", "$_deviceKey"] } },
+          browser: { $first: "$device.browser" },
+          os: { $first: { $ifNull: ["$device.os", "$device.platform"] } },
+          deviceType: {
+            $first: {
+              $ifNull: [
+                "$device.deviceType",
+                { $cond: [{ $ifNull: ["$device.isMobile", false] }, "Mobile", "Desktop"] },
+              ],
+            },
+          },
+          screenResolution: { $first: "$device.screenResolution" },
+          deviceLabel: {
+            $first: {
+              $ifNull: [
+                "$device.deviceLabel",
+                {
+                  $concat: [
+                    { $ifNull: ["$device.browser", "Unknown Browser"] },
+                    " on ",
+                    { $ifNull: ["$device.platform", "Unknown OS"] },
+                  ],
+                },
+              ],
+            },
+          },
+          isMobile: { $first: "$device.isMobile" },
+          totalActivities: { $sum: 1 },
+          sessions: { $addToSet: "$sessionId" },
+          logins: {
+            $sum: { $cond: [{ $eq: ["$activityType", "login"] }, 1, 0] },
+          },
+          pageViews: {
+            $sum: {
+              $cond: [
+                { $in: ["$activityType", ["page_view", "screen_view"]] },
+                1,
+                0,
+              ],
+            },
+          },
+          clicks: {
+            $sum: { $cond: [{ $eq: ["$activityType", "button_click"] }, 1, 0] },
+          },
+          totalDuration: {
+            $sum: {
+              $cond: [
+                { $eq: ["$activityType", "screen_time"] },
+                { $ifNull: ["$duration", 0] },
+                0,
+              ],
+            },
+          },
+          lastSeen: { $max: "$timestamp" },
+          firstSeen: { $min: "$timestamp" },
+          ips: { $addToSet: "$location.ip" },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          deviceId: 1,
+          browser: 1,
+          os: 1,
+          deviceType: 1,
+          screenResolution: 1,
+          deviceLabel: 1,
+          isMobile: 1,
+          totalActivities: 1,
+          sessionCount: { $size: "$sessions" },
+          logins: 1,
+          pageViews: 1,
+          clicks: 1,
+          totalDuration: 1,
+          lastSeen: 1,
+          firstSeen: 1,
+          ips: 1,
+        },
+      },
+      { $sort: { lastSeen: -1 } },
+    ]),
     AdminActivityModel.find(baseFilter)
       .sort({ timestamp: -1 })
       .skip(skip)
@@ -230,7 +366,8 @@ async function fetchAdminTrackingData(
     activityByHour,
     activityByDay: (activityByDay || []).reverse(),
     topPages,
-    deviceInfo: deviceAgg || null,
+    deviceInfo: deviceLatest || null,
+    devices: devicesAgg || [],
     timeline,
     totalPages: Math.ceil(totalCount / parseInt(limit)),
   };
@@ -247,6 +384,7 @@ controller.getMyTracking = async (req, res) => {
       endDate,
       startTime,
       endTime,
+      deviceId,
     } = req.query;
     const data = await fetchAdminTrackingData(
       req.user._id,
@@ -257,6 +395,7 @@ controller.getMyTracking = async (req, res) => {
       endDate,
       startTime,
       endTime,
+      deviceId,
     );
     return res.status(200).json({ status: true, data });
   } catch (error) {
@@ -368,6 +507,7 @@ controller.getAdminDetail = async (req, res) => {
       endDate,
       startTime,
       endTime,
+      deviceId,
     } = req.query;
     const data = await fetchAdminTrackingData(
       adminId,
@@ -378,6 +518,7 @@ controller.getAdminDetail = async (req, res) => {
       endDate,
       startTime,
       endTime,
+      deviceId,
     );
     return res.status(200).json({ status: true, data });
   } catch (error) {
