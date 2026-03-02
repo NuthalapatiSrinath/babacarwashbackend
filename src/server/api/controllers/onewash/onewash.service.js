@@ -169,6 +169,11 @@ service.list = async (userInfo, query) => {
     { $group: { _id: "$payment_mode", amount: { $sum: "$amount" } } },
   ]);
 
+  const tipsAgg = await OneWashModel.aggregate([
+    { $match: findQuery },
+    { $group: { _id: null, totalTips: { $sum: "$tip_amount" } } },
+  ]);
+
   const getAmount = (mode) =>
     totalPayments.find((p) => p._id?.toLowerCase() === mode)?.amount || 0;
 
@@ -178,6 +183,7 @@ service.list = async (userInfo, query) => {
     cash: getAmount("cash"),
     card: getAmount("card"),
     bank: getAmount("bank transfer"),
+    tips: tipsAgg.length > 0 ? tipsAgg[0].totalTips : 0,
   };
 
   return { total, data, counts };
