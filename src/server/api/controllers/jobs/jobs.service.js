@@ -418,11 +418,11 @@ service.exportData = async (userInfo, rawQuery) => {
         parking: vehicleInfo?.parking_no || "-",
         service_type:
           vehicleInfo?.wash_type === "outside"
-            ? "External Wash"
+            ? "Outside"
             : vehicleInfo?.wash_type === "total"
-              ? "Internal + External"
+              ? "Inside + Outside"
               : vehicleInfo?.wash_type === "inside"
-                ? "Internal Wash"
+                ? "Inside"
                 : "-",
         worker: item.worker?.name || "Unassigned",
         status: item.status || "pending",

@@ -112,11 +112,22 @@ service.list = async (userInfo, query) => {
         } else if (job.mall) {
           // Check if mall has pricing configured with wash_types
           const pricing = await PricingModel.findOne({ mall: job.mall }).lean();
-          if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+          // Unified pricing - check flat structure first, then legacy sedan/4x4
+          const hasWashTypes =
+            (pricing && pricing.wash_types) ||
+            (pricing && pricing.sedan && pricing.sedan.wash_types);
+          if (hasWashTypes) {
             // Mall has wash types configured, show the wash type and set wash_type field
-            display_service_type = job.wash_type
-              ? job.wash_type.toUpperCase()
-              : "MALL";
+            const wt = (job.wash_type || '').toLowerCase();
+            if (wt === 'outside') {
+              display_service_type = 'Outside';
+            } else if (wt === 'total') {
+              display_service_type = 'Inside + Outside';
+            } else if (wt === 'inside') {
+              display_service_type = 'Inside';
+            } else {
+              display_service_type = 'Mall';
+            }
             wash_type = job.wash_type || null; // Only set wash_type if pricing configured
           } else {
             // Mall doesn't have wash types configured

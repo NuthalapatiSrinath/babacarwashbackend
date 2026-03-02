@@ -120,31 +120,37 @@ service.create = async (userInfo, payload) => {
     );
 
     if (pricingData) {
-      // Determine vehicle data
-      const vehicleData =
-        payload.vehicle_type === "suv" ? pricingData["4x4"] : pricingData.sedan;
+      // Unified pricing - no sedan/4x4 split
+      // Try flat structure first, then fallback to legacy sedan/4x4 structure
+      const washTypes =
+        pricingData.wash_types ||
+        (pricingData.sedan && pricingData.sedan.wash_types) ||
+        (pricingData["4x4"] && pricingData["4x4"].wash_types);
+      const onetimePrice =
+        pricingData.onetime ||
+        (pricingData.sedan && pricingData.sedan.onetime) ||
+        (pricingData["4x4"] && pricingData["4x4"].onetime);
 
       console.log(
-        "🚗 [BACKEND] Vehicle data:",
-        JSON.stringify(vehicleData, null, 2),
+        "🚗 [BACKEND] Pricing data (unified):",
+        JSON.stringify({ washTypes, onetimePrice }, null, 2),
       );
 
       // Check if wash_types pricing is configured
       if (
-        vehicleData &&
-        vehicleData.wash_types &&
-        (vehicleData.wash_types.inside || vehicleData.wash_types.outside) &&
+        washTypes &&
+        (washTypes.inside || washTypes.outside) &&
         payload.wash_type
       ) {
         // Use wash_types pricing (Inside/Outside/Total method)
-        payload.amount = vehicleData.wash_types[payload.wash_type];
+        payload.amount = washTypes[payload.wash_type];
         console.log("✅ [BACKEND] Using wash_types pricing:", {
           wash_type: payload.wash_type,
           amount: payload.amount,
         });
-      } else if (vehicleData && vehicleData.onetime) {
+      } else if (onetimePrice) {
         // Use onetime pricing
-        payload.amount = vehicleData.onetime;
+        payload.amount = onetimePrice;
         console.log("✅ [BACKEND] Using onetime pricing:", payload.amount);
       } else {
         // Fallback to mall's default amount

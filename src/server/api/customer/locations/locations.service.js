@@ -1,4 +1,4 @@
-const BuildingsModel = require("../../models/buildings.model");
+const LocationsModel = require("../../controllers/locations/locations.model");
 const CommonHelper = require("../../../helpers/common.helper");
 const service = module.exports;
 
@@ -6,17 +6,15 @@ service.list = async (userInfo, query) => {
   const paginationData = CommonHelper.paginationData(query);
   const findQuery = {
     isDeleted: false,
-    ...(query.location_id ? { location_id: query.location_id } : null),
     ...(query.search
-      ? { $or: [{ name: { $regex: query.search, $options: "i" } }] }
+      ? { $or: [{ address: { $regex: query.search, $options: "i" } }] }
       : null),
   };
-  const total = await BuildingsModel.countDocuments(findQuery);
-  const data = await BuildingsModel.find(findQuery)
-    .sort({ _id: -1 })
+  const total = await LocationsModel.countDocuments(findQuery);
+  const data = await LocationsModel.find(findQuery)
+    .sort({ address: 1 })
     .skip(paginationData.skip)
     .limit(paginationData.limit)
-    .populate("vehicle mall building")
     .lean();
   return { total, data };
 };

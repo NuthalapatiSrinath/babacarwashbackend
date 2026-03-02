@@ -138,11 +138,22 @@ service.list = async (userInfo, query) => {
         isDeleted: false,
       }).lean();
 
-      if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+      // Unified pricing - check flat structure first, then legacy sedan/4x4
+      const hasWashTypes =
+        (pricing && pricing.wash_types) ||
+        (pricing && pricing.sedan && pricing.sedan.wash_types);
+      if (hasWashTypes) {
         // Mall has wash types configured - show actual wash type
-        item.display_service_type = item.wash_type
-          ? item.wash_type.toUpperCase()
-          : "INTERNAL";
+        const wt = (item.wash_type || '').toLowerCase();
+        if (wt === 'outside') {
+          item.display_service_type = 'Outside';
+        } else if (wt === 'total') {
+          item.display_service_type = 'Inside + Outside';
+        } else if (wt === 'inside') {
+          item.display_service_type = 'Inside';
+        } else {
+          item.display_service_type = 'Mall';
+        }
       } else {
         // Mall not configured - show "Mall"
         item.display_service_type = "Mall";
@@ -214,7 +225,11 @@ service.create = async (userInfo, payload) => {
     }).lean();
 
     // Only calculate tip if mall has pricing configured with wash types
-    if (pricingData && pricingData.sedan && pricingData.sedan.wash_types) {
+    // Unified pricing - check flat structure first, then legacy sedan/4x4
+    const washTypesData =
+      (pricingData && pricingData.wash_types) ||
+      (pricingData && pricingData.sedan && pricingData.sedan.wash_types);
+    if (washTypesData) {
       let baseAmount;
 
       if (
@@ -347,7 +362,11 @@ service.update = async (userInfo, id, payload) => {
     }).lean();
 
     // Only calculate tip if mall has pricing configured with wash types
-    if (pricingData && pricingData.sedan && pricingData.sedan.wash_types) {
+    // Unified pricing - check flat structure first, then legacy sedan/4x4
+    const washTypesData2 =
+      (pricingData && pricingData.wash_types) ||
+      (pricingData && pricingData.sedan && pricingData.sedan.wash_types);
+    if (washTypesData2) {
       const washType = updatePayload.wash_type || onewashData.wash_type;
       const paymentMode =
         updatePayload.payment_mode || onewashData.payment_mode;
@@ -557,14 +576,18 @@ service.exportData = async (userInfo, query) => {
         const pricing = await PricingModel.findOne({
           mall: item.mall._id || item.mall,
         }).lean();
-        if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+        // Unified pricing - check flat structure first, then legacy sedan/4x4
+        const hasWashTypesExport =
+          (pricing && pricing.wash_types) ||
+          (pricing && pricing.sedan && pricing.sedan.wash_types);
+        if (hasWashTypesExport) {
           // Mall has wash types configured, show the wash type
           if (item.wash_type === "outside") {
-            display_service_type = "EXTERNAL";
+            display_service_type = "Outside";
           } else if (item.wash_type === "total") {
-            display_service_type = "TOTAL";
+            display_service_type = "Inside + Outside";
           } else if (item.wash_type === "inside") {
-            display_service_type = "INTERNAL";
+            display_service_type = "Inside";
           } else {
             display_service_type = "Mall";
           }

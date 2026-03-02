@@ -8,6 +8,7 @@ router.use("/places", require("./places"));
 router.use("/pricing", require("./pricing"));
 router.use("/malls", require("./malls"));
 router.use("/buildings", require("./buildings"));
+router.use("/locations", require("./locations"));
 router.use("/payments", require("./payments"));
 router.use("/history", require("./history"));
 router.use("/vehicle-catalog", require("./vehicle-catalog"));

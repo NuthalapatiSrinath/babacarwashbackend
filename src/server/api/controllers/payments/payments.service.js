@@ -298,14 +298,18 @@ service.list = async (userInfo, query) => {
                 isDeleted: false,
               }).lean();
 
-              if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+              // Unified pricing - check flat structure first, then legacy sedan/4x4
+              const hasWashTypes1 =
+                (pricing && pricing.wash_types) ||
+                (pricing && pricing.sedan && pricing.sedan.wash_types);
+              if (hasWashTypes1) {
                 // Mall has wash types configured - show actual wash type
                 if (job.wash_type === "outside") {
-                  display_service_type = "EXTERNAL";
+                  display_service_type = "Outside";
                 } else if (job.wash_type === "total") {
-                  display_service_type = "TOTAL";
+                  display_service_type = "Inside + Outside";
                 } else if (job.wash_type === "inside") {
-                  display_service_type = "INTERNAL";
+                  display_service_type = "Inside";
                 } else {
                   display_service_type = "Mall";
                 }
@@ -769,21 +773,26 @@ service.exportData = async (userInfo, query) => {
               `   Pricing found:`,
               pricing
                 ? {
-                    hasSedanWashTypes: !!(
-                      pricing.sedan && pricing.sedan.wash_types
+                    hasWashTypes: !!(
+                      pricing.wash_types ||
+                      (pricing.sedan && pricing.sedan.wash_types)
                     ),
                   }
                 : "NOT FOUND",
             );
 
-            if (pricing && pricing.sedan && pricing.sedan.wash_types) {
+            // Unified pricing - check flat structure first, then legacy sedan/4x4
+            const hasWashTypes2 =
+              (pricing && pricing.wash_types) ||
+              (pricing && pricing.sedan && pricing.sedan.wash_types);
+            if (hasWashTypes2) {
               // Mall has wash types configured - show actual wash type
               if (wash_type === "outside") {
-                display_service_type = "EXTERNAL";
+                display_service_type = "Outside";
               } else if (wash_type === "total") {
-                display_service_type = "TOTAL";
+                display_service_type = "Inside + Outside";
               } else if (wash_type === "inside") {
-                display_service_type = "INTERNAL";
+                display_service_type = "Inside";
               } else {
                 display_service_type = "Mall";
               }
@@ -807,11 +816,11 @@ service.exportData = async (userInfo, query) => {
         // Regular residence payments - use vehicle wash_type
         display_service_type =
           payment.vehicle?.wash_type === "outside"
-            ? "External Wash"
+            ? "Outside"
             : payment.vehicle?.wash_type === "total"
-              ? "Internal + External"
+              ? "Inside + Outside"
               : payment.vehicle?.wash_type === "inside"
-                ? "Internal Wash"
+                ? "Inside"
                 : "-";
       }
 

@@ -51,10 +51,9 @@ async function getPublicIP() {
   } catch (err) {
     // Fallback: ip-api.com without IP param returns caller's info
     try {
-      const { data } = await axios.get(
-        "http://ip-api.com/json/?fields=query",
-        { timeout: 3000 },
-      );
+      const { data } = await axios.get("http://ip-api.com/json/?fields=query", {
+        timeout: 3000,
+      });
       if (data && data.query) {
         cachedPublicIP = data.query;
         publicIPFetchedAt = Date.now();
@@ -172,7 +171,7 @@ controller.trackBatch = async (req, res) => {
     // If local IP, getGeoFromIP resolves the actual public IP
     const geo = await getGeoFromIP(rawIP);
     // Use the real public IP in location, not the local one
-    const displayIP = isLocalIP(rawIP) ? (cachedPublicIP || rawIP) : rawIP;
+    const displayIP = isLocalIP(rawIP) ? cachedPublicIP || rawIP : rawIP;
 
     // Check if frontend sent GPS coords — do server-side reverse geocode as fallback
     const firstLoc = activities[0]?.location;
