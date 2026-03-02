@@ -16,12 +16,6 @@ const isValidId = (id) =>
 
 // --- LIST ---
 service.list = async (userInfo, query) => {
-  // Clean up empty string references in mall and building fields
-  await OneWashModel.updateMany(
-    { $or: [{ mall: "" }, { building: "" }] },
-    { $unset: { mall: "", building: "" } },
-  ).catch((err) => console.log("Cleanup warning:", err.message));
-
   const findQuery = { isDeleted: false };
   if (!query.worker) findQuery.worker = { $ne: "" };
 
@@ -30,7 +24,9 @@ service.list = async (userInfo, query) => {
 
   if (userInfo.service_type === "mall" && isValidId(userInfo.mall)) {
     findWorkerQuery.malls = { $in: [userInfo.mall] };
-    const workers = await WorkersModel.find(findWorkerQuery).select("_id");
+    const workers = await WorkersModel.find(findWorkerQuery)
+      .select("_id")
+      .lean();
     limitToWorkerIds = workers.map((w) => w._id);
   } else if (
     userInfo.service_type === "residence" &&
@@ -39,7 +35,9 @@ service.list = async (userInfo, query) => {
     const validBuildings = userInfo.buildings.filter(isValidId);
     if (validBuildings.length > 0) {
       findWorkerQuery.buildings = { $in: validBuildings };
-      const workers = await WorkersModel.find(findWorkerQuery).select("_id");
+      const workers = await WorkersModel.find(findWorkerQuery)
+        .select("_id")
+        .lean();
       limitToWorkerIds = workers.map((w) => w._id);
     }
   }
@@ -93,57 +91,142 @@ service.list = async (userInfo, query) => {
   }
 
   const paginationData = CommonHelper.paginationData(query);
-  const total = await OneWashModel.countDocuments(findQuery);
 
-  let data = await OneWashModel.find(findQuery)
-    .sort({ _id: -1 })
-    .skip(paginationData.skip)
-    .limit(paginationData.limit)
-    .lean();
+  // Run count, data fetch, and aggregations in parallel for speed
+  const [total, data, statsAgg] = await Promise.all([
+    OneWashModel.countDocuments(findQuery),
+    OneWashModel.find(findQuery)
+      .sort({ _id: -1 })
+      .skip(paginationData.skip)
+      .limit(paginationData.limit)
+      .populate({ path: "worker", model: "workers", select: "name" })
+      .populate({ path: "mall", model: "malls", select: "name" })
+      .populate({ path: "building", model: "buildings", select: "name" })
+      .lean(),
+    OneWashModel.aggregate([
+      { $match: findQuery },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: "$amount" },
+          totalTips: { $sum: "$tip_amount" },
+          cash: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toLower: "$payment_mode" }, "cash"] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+          card: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toLower: "$payment_mode" }, "card"] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+          bank: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toLower: "$payment_mode" }, "bank transfer"] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+          // Wash type counts
+          outsideCount: {
+            $sum: {
+              $cond: [{ $eq: [{ $toLower: "$wash_type" }, "outside"] }, 1, 0],
+            },
+          },
+          insideOutsideCount: {
+            $sum: {
+              $cond: [{ $eq: [{ $toLower: "$wash_type" }, "total"] }, 1, 0],
+            },
+          },
+          residenceCount: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toLower: "$service_type" }, "residence"] },
+                1,
+                0,
+              ],
+            },
+          },
+          // Wash type amounts
+          outsideAmount: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toLower: "$wash_type" }, "outside"] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+          insideOutsideAmount: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toLower: "$wash_type" }, "total"] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+          residenceAmount: {
+            $sum: {
+              $cond: [
+                { $eq: [{ $toLower: "$service_type" }, "residence"] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]),
+  ]);
 
-  try {
-    // Populate with proper checks for empty strings
-    const populateOptions = [
-      { path: "worker", model: "workers", select: "name" },
-    ];
+  // Batch pricing lookup - get all unique mall IDs and fetch pricing in one query
+  const PricingModel = require("../../models/pricing.model");
+  const uniqueMallIds = [
+    ...new Set(
+      data
+        .filter((item) => item.service_type === "mall" && item.mall)
+        .map((item) => {
+          const mallId =
+            typeof item.mall === "object" ? item.mall._id : item.mall;
+          return mallId ? mallId.toString() : null;
+        })
+        .filter(Boolean),
+    ),
+  ];
 
-    // Only populate mall if it exists and is not empty string
-    if (data.some((item) => item.mall && item.mall !== "")) {
-      populateOptions.push({ path: "mall", model: "malls", select: "name" });
+  let pricingMap = {};
+  if (uniqueMallIds.length > 0) {
+    const pricings = await PricingModel.find({
+      mall: { $in: uniqueMallIds },
+      service_type: "mall",
+      isDeleted: false,
+    }).lean();
+    for (const p of pricings) {
+      pricingMap[p.mall.toString()] = p;
     }
-
-    // Only populate building if it exists and is not empty string
-    if (data.some((item) => item.building && item.building !== "")) {
-      populateOptions.push({
-        path: "building",
-        model: "buildings",
-        select: "name",
-      });
-    }
-
-    data = await OneWashModel.populate(data, populateOptions);
-  } catch (e) {
-    console.error("List Populate Warning:", e.message);
   }
 
-  // Add computed display_service_type based on pricing configuration
-  const PricingModel = require("../../models/pricing.model");
+  // Add computed display_service_type using batched pricing data
   for (let item of data) {
     if (item.service_type === "mall" && item.mall) {
-      // Check if this mall has pricing configured with wash types
       const mallId = typeof item.mall === "object" ? item.mall._id : item.mall;
-      const pricing = await PricingModel.findOne({
-        mall: mallId,
-        service_type: "mall",
-        isDeleted: false,
-      }).lean();
+      const pricing = pricingMap[mallId?.toString()];
 
-      // Unified pricing - check flat structure first, then legacy sedan/4x4
       const hasWashTypes =
         (pricing && pricing.wash_types) ||
         (pricing && pricing.sedan && pricing.sedan.wash_types);
       if (hasWashTypes) {
-        // Mall has wash types configured - show actual wash type
         const wt = (item.wash_type || "").toLowerCase();
         if (wt === "outside") {
           item.display_service_type = "Outside";
@@ -155,35 +238,27 @@ service.list = async (userInfo, query) => {
           item.display_service_type = "Mall";
         }
       } else {
-        // Mall not configured - show "Mall"
         item.display_service_type = "Mall";
       }
     } else {
-      // For residence or other types, keep original
       item.display_service_type = item.service_type;
     }
   }
 
-  const totalPayments = await OneWashModel.aggregate([
-    { $match: findQuery },
-    { $group: { _id: "$payment_mode", amount: { $sum: "$amount" } } },
-  ]);
-
-  const tipsAgg = await OneWashModel.aggregate([
-    { $match: findQuery },
-    { $group: { _id: null, totalTips: { $sum: "$tip_amount" } } },
-  ]);
-
-  const getAmount = (mode) =>
-    totalPayments.find((p) => p._id?.toLowerCase() === mode)?.amount || 0;
-
+  const aggResult = statsAgg.length > 0 ? statsAgg[0] : {};
   const counts = {
     totalJobs: total,
-    totalAmount: totalPayments.reduce((acc, curr) => acc + curr.amount, 0),
-    cash: getAmount("cash"),
-    card: getAmount("card"),
-    bank: getAmount("bank transfer"),
-    tips: tipsAgg.length > 0 ? tipsAgg[0].totalTips : 0,
+    totalAmount: aggResult.totalAmount || 0,
+    cash: aggResult.cash || 0,
+    card: aggResult.card || 0,
+    bank: aggResult.bank || 0,
+    tips: aggResult.totalTips || 0,
+    outsideCount: aggResult.outsideCount || 0,
+    insideOutsideCount: aggResult.insideOutsideCount || 0,
+    residenceCount: aggResult.residenceCount || 0,
+    outsideAmount: aggResult.outsideAmount || 0,
+    insideOutsideAmount: aggResult.insideOutsideAmount || 0,
+    residenceAmount: aggResult.residenceAmount || 0,
   };
 
   return { total, data, counts };
