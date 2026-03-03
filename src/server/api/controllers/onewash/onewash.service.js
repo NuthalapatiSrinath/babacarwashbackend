@@ -106,15 +106,22 @@ service.list = async (userInfo, query) => {
     OneWashModel.aggregate([
       { $match: findQuery },
       {
+        $addFields: {
+          originalAmount: {
+            $subtract: ["$amount", { $ifNull: ["$tip_amount", 0] }],
+          },
+        },
+      },
+      {
         $group: {
           _id: null,
-          totalAmount: { $sum: "$amount" },
+          totalAmount: { $sum: "$originalAmount" },
           totalTips: { $sum: "$tip_amount" },
           cash: {
             $sum: {
               $cond: [
                 { $eq: [{ $toLower: "$payment_mode" }, "cash"] },
-                "$amount",
+                "$originalAmount",
                 0,
               ],
             },
@@ -123,7 +130,7 @@ service.list = async (userInfo, query) => {
             $sum: {
               $cond: [
                 { $eq: [{ $toLower: "$payment_mode" }, "card"] },
-                "$amount",
+                "$originalAmount",
                 0,
               ],
             },
@@ -132,7 +139,7 @@ service.list = async (userInfo, query) => {
             $sum: {
               $cond: [
                 { $eq: [{ $toLower: "$payment_mode" }, "bank transfer"] },
-                "$amount",
+                "$originalAmount",
                 0,
               ],
             },
@@ -157,12 +164,12 @@ service.list = async (userInfo, query) => {
               ],
             },
           },
-          // Wash type amounts
+          // Wash type amounts (original amounts without tips)
           outsideAmount: {
             $sum: {
               $cond: [
                 { $eq: [{ $toLower: "$wash_type" }, "outside"] },
-                "$amount",
+                "$originalAmount",
                 0,
               ],
             },
@@ -171,7 +178,7 @@ service.list = async (userInfo, query) => {
             $sum: {
               $cond: [
                 { $eq: [{ $toLower: "$wash_type" }, "total"] },
-                "$amount",
+                "$originalAmount",
                 0,
               ],
             },
@@ -180,7 +187,7 @@ service.list = async (userInfo, query) => {
             $sum: {
               $cond: [
                 { $eq: [{ $toLower: "$service_type" }, "residence"] },
-                "$amount",
+                "$originalAmount",
                 0,
               ],
             },
