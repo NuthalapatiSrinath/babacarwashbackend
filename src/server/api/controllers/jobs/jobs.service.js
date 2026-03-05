@@ -668,9 +668,21 @@ service.monthlyStatement = async (userInfo, query) => {
 
     const carList = Array.from(carMap.values());
 
-    // If format is JSON (For PDF/Preview), return raw data
+    // If format is JSON (For PDF/Preview), return raw data with totals
     if (query.format === "json") {
-      return carList;
+      const columnTotals = new Array(daysInMonth).fill(0);
+      let grandTotal = 0;
+      let totalTips = 0;
+      carList.forEach((car) => {
+        if (car.dailyMarks) {
+          car.dailyMarks.forEach((mark, i) => {
+            columnTotals[i] += mark || 0;
+          });
+          grandTotal += car.dailyMarks.reduce((s, m) => s + (m || 0), 0);
+        }
+        totalTips += car.tips || 0;
+      });
+      return { data: carList, total: carList.length, columnTotals, grandTotal, totalTips };
     }
 
     // Note: Excel logic uses the same data structure below
@@ -709,14 +721,25 @@ service.monthlyStatement = async (userInfo, query) => {
 
   // ✅ Return JSON if requested
   if (query.format === "json") {
-    return workerSummaries.map((worker, index) => ({
+    const summaryData = workerSummaries.map((worker, index) => ({
       slNo: index + 1,
-      workerId: worker.workerId, // ✅ Include workerId for filtering
+      workerId: worker.workerId,
       name: worker.workerName,
-      workerName: worker.workerName, // ✅ Include for consistency
+      workerName: worker.workerName,
       dailyCounts: worker.dailyCounts,
-      tips: worker.tips, // ✅ Send tips to frontend
+      tips: worker.tips,
     }));
+    const columnTotals = new Array(daysInMonth).fill(0);
+    let grandTotal = 0;
+    let totalTips = 0;
+    summaryData.forEach((w) => {
+      if (w.dailyCounts) {
+        w.dailyCounts.forEach((c, i) => { columnTotals[i] += c || 0; });
+        grandTotal += w.dailyCounts.reduce((s, c) => s + (c || 0), 0);
+      }
+      totalTips += w.tips || 0;
+    });
+    return { data: summaryData, total: summaryData.length, columnTotals, grandTotal, totalTips };
   }
 
   // =========================================================

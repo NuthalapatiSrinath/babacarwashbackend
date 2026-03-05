@@ -5,10 +5,14 @@ const controller = module.exports;
 controller.list = async (req, res) => {
   try {
     const { user, query } = req;
-    const data = await service.list(user, query);
-    return res
-      .status(200)
-      .json({ statusCode: 200, message: "success", ...data });
+    const result = await service.list(user, query);
+    return res.status(200).json({
+      statusCode: 200,
+      message: "success",
+      total: result.total || 0,
+      data: result.data || [],
+      counts: result.counts || {},
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Internal server error", error });
@@ -109,7 +113,11 @@ controller.monthlyStatement = async (req, res) => {
 
     // If result is not a workbook (it's JSON data), send JSON
     if (query.format === "json") {
-      return res.status(200).json(result);
+      return res.status(200).json({
+        statusCode: 200,
+        message: "success",
+        ...result,
+      });
     }
 
     // Default: Send Excel File

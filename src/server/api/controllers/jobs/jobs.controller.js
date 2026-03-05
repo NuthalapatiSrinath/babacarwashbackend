@@ -106,7 +106,11 @@ controller.monthlyStatement = async (req, res) => {
 
     // If result is not a workbook (it's JSON data), send JSON
     if (query.format === "json") {
-      return res.status(200).json(result);
+      return res.status(200).json({
+        statusCode: 200,
+        message: "success",
+        ...result,
+      });
     }
 
     // Default: Send Excel File
