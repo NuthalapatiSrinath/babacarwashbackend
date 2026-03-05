@@ -2108,3 +2108,100 @@ service.generatePDF = async (userInfo, filters) => {
     }
   });
 };
+
+/**
+ * Get all payments that have been edited (have amount_edit_history).
+ * Returns flattened list of edits with payment + customer + vehicle info.
+ */
+service.getEditHistory = async (userInfo, query) => {
+  const paginationData = CommonHelper.paginationData(query);
+
+  const findQuery = {
+    isDeleted: false,
+    amount_edit_history: { $exists: true, $ne: [] },
+  };
+
+  // Optional: filter by onewash type
+  if (query.type === "onewash") {
+    findQuery.onewash = true;
+  } else if (query.type === "residence") {
+    findQuery.onewash = false;
+  }
+
+  const total = await PaymentsModel.countDocuments(findQuery);
+
+  let data = await PaymentsModel.find(findQuery)
+    .sort({ updatedAt: -1 })
+    .skip(paginationData.skip)
+    .limit(paginationData.limit)
+    .lean();
+
+  // Clean up empty strings before populating
+  data = data.map((payment) => {
+    if (payment.worker === "") payment.worker = null;
+    if (payment.building === "") payment.building = null;
+    return payment;
+  });
+
+  // Populate references
+  try {
+    data = await PaymentsModel.populate(data, [
+      {
+        path: "customer",
+        model: "customers",
+        select: "firstName lastName mobile",
+      },
+      { path: "worker", model: "workers", select: "name" },
+      { path: "building", model: "buildings", select: "name" },
+    ]);
+  } catch (e) {
+    console.warn("⚠️ [EDIT HISTORY] Populate warning:", e.message);
+  }
+
+  return { total, data };
+};
+
+/**
+ * Get detailed history of a specific payment.
+ * Returns amount edit history + collection transactions.
+ */
+service.getPaymentHistory = async (userInfo, paymentId) => {
+  const payment = await PaymentsModel.findOne({
+    _id: paymentId,
+    isDeleted: false,
+  }).lean();
+
+  if (!payment) {
+    throw "Payment not found";
+  }
+
+  // Get amount edit history
+  const amountEdits = payment.amount_edit_history || [];
+
+  // Get collection transactions
+  const transactions = await TransactionsModel.find({
+    payment: paymentId,
+    isDeleted: false,
+  })
+    .sort({ payment_date: -1 })
+    .lean();
+
+  // Populate transaction creators
+  const populatedTransactions = await TransactionsModel.populate(transactions, [
+    {
+      path: "createdBy",
+      model: "users",
+      select: "name email",
+    },
+  ]);
+
+  return {
+    paymentId: payment._id,
+    currentAmount: payment.total_amount,
+    currentBalance: payment.balance,
+    currentStatus: payment.status,
+    notes: payment.notes,
+    amountEdits: amountEdits,
+    transactions: populatedTransactions,
+  };
+};

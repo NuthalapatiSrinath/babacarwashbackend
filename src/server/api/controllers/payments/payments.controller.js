@@ -389,6 +389,21 @@ controller.runInvoice = async (req, res) => {
   }
 };
 
+controller.getEditHistory = async (req, res) => {
+  try {
+    const { user, query } = req;
+    const data = await service.getEditHistory(user, query);
+    return res
+      .status(200)
+      .json({ statusCode: 200, message: "success", ...data });
+  } catch (error) {
+    console.error("❌ [CONTROLLER] Edit History Error:", error);
+    return res
+      .status(500)
+      .json({ message: "Internal server error", error: error.message });
+  }
+};
+
 /**
  * GET /payments/check-invoice?month=0&year=2026
  * Check if invoices already exist for a given month
@@ -416,6 +431,25 @@ controller.checkInvoice = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ [Check Invoice Error]:", error);
+    return res.status(500).json({
+      statusCode: 500,
+      message: "Internal server error",
+      error: error.message,
+    });
+  }
+};
+
+// Get detailed payment history (amount edits + transactions)
+controller.getPaymentHistory = async (req, res) => {
+  try {
+    const { user, params } = req;
+    const data = await service.getPaymentHistory(user, params.id);
+    return res.status(200).json({ statusCode: 200, message: "success", data });
+  } catch (error) {
+    if (typeof error === "string") {
+      return res.status(400).json({ statusCode: 400, message: error });
+    }
+    console.error("❌ [Get Payment History Error]:", error);
     return res.status(500).json({
       statusCode: 500,
       message: "Internal server error",

@@ -24,6 +24,16 @@ router.get(
   controller.monthlyStatement,
 );
 
+// Edit history
+router.get("/edit-history", AuthHelper.authenticate, controller.getEditHistory);
+
+// Get payment history (amount edits + transactions)
+router.get(
+  "/:id/history",
+  AuthHelper.authenticate,
+  controller.getPaymentHistory,
+);
+
 // Invoice generation (manual run + check)
 router.post("/run-invoice", AuthHelper.authenticate, controller.runInvoice);
 router.get("/check-invoice", AuthHelper.authenticate, controller.checkInvoice);
