@@ -29,5 +29,6 @@ router.use("/vehicle-catalog", require("./vehicle-catalog"));
 router.use("/customer-activities", require("./customer-activities"));
 router.use("/staff-activities", require("./staff-activities"));
 router.use("/admin-activities", require("./admin-activities"));
+router.use("/supervisor-activities", require("./supervisor-activities"));
 
 module.exports = router;
