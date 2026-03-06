@@ -249,6 +249,8 @@ service.create = async (userInfo, payload) => {
   const id = await CounterService.id("workers");
   const data = {
     createdBy: userInfo._id,
+    createdByName: userInfo.name || "Unknown",
+    createdSource: "Staff App",
     updatedBy: userInfo._id,
     id,
     ...payload,
@@ -336,7 +338,11 @@ service.jobRejected = async (userInfo, id, payload) => {
   await JobsModel.updateOne({ _id: id }, { $set: data });
 };
 
-service.createJob = async (customer, createdBy = "Cron Scheduler") => {
+service.createJob = async (
+  customer,
+  createdBy = "Cron Scheduler",
+  createdSource = null,
+) => {
   console.log(
     `🔧 [CREATE JOB] Starting for customer ${customer._id || customer.mobile}, createdBy: ${createdBy}`,
   );
@@ -377,6 +383,10 @@ service.createJob = async (customer, createdBy = "Cron Scheduler") => {
           location: customer.location || null,
           building: customer.building || null,
           createdBy,
+          createdByName: createdBy,
+          createdSource:
+            createdSource ||
+            (createdBy === "Customer Booking" ? "Customer App" : "Cron Job"),
           immediate: true,
         });
       } else {
@@ -407,12 +417,21 @@ service.createJob = async (customer, createdBy = "Cron Scheduler") => {
         Saturday: 6,
       };
 
+      // Case-insensitive day name lookup helper
+      const getDayNumber = (name) => {
+        if (!name) return undefined;
+        const key = Object.keys(dayNameToNumber).find(
+          (k) => k.toLowerCase() === name.trim().toLowerCase(),
+        );
+        return key ? dayNameToNumber[key] : undefined;
+      };
+
       if (typeof vehicle.schedule_days === "string") {
         // Handle comma-separated string: "Mon,Wed,Fri"
         scheduledDayNumbers = vehicle.schedule_days
           .split(",")
           .map((day) => day.trim())
-          .map((day) => dayNameToNumber[day])
+          .map((day) => getDayNumber(day))
           .filter((num) => num !== undefined);
       } else if (Array.isArray(vehicle.schedule_days)) {
         // Handle array format
@@ -423,9 +442,9 @@ service.createJob = async (customer, createdBy = "Cron Scheduler") => {
               return day
                 .split(",")
                 .map((d) => d.trim())
-                .map((d) => dayNameToNumber[d]);
+                .map((d) => getDayNumber(d));
             } else if (typeof day === "object" && day.day) {
-              return dayNameToNumber[day.day];
+              return getDayNumber(day.day);
             } else if (typeof day === "object" && day.value !== undefined) {
               return day.value;
             }
@@ -452,6 +471,10 @@ service.createJob = async (customer, createdBy = "Cron Scheduler") => {
           location: customer.location || null,
           building: customer.building || null,
           createdBy,
+          createdByName: createdBy,
+          createdSource:
+            createdSource ||
+            (createdBy === "Customer Booking" ? "Customer App" : "Cron Job"),
           immediate: true,
         });
       } else {

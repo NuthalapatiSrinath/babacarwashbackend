@@ -20,6 +20,8 @@ router.use("/attendance", require("./attendance"));
 router.use("/sites", require("./sites"));
 router.use("/configurations", require("./configurations"));
 router.use("/admin/staff", require("./staff"));
+router.use("/admin-staff", require("./admin-staff"));
+router.use("/access-requests", require("./access-requests"));
 
 // ✅ FIXED: Added require()
 router.use("/salary", require("./salary"));

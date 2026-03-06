@@ -113,6 +113,12 @@ service.signin = async (payload) => {
       userData.role,
     );
 
+    // Block login for blocked users
+    if (userData.isBlocked) {
+      console.log("❌ [ADMIN AUTH] User is blocked:", userData.name);
+      throw "BLOCKED";
+    }
+
     const token = AuthHelper.createToken({ _id: userData._id });
 
     delete userData.hPassword;

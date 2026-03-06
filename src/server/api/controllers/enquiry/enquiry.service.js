@@ -100,6 +100,30 @@ service.create = async (userInfo, payload) => {
     }));
   }
 
+  // Normalize schedule_days in vehicles
+  const dayNameMap = {
+    sun: "Sun",
+    mon: "Mon",
+    tue: "Tue",
+    wed: "Wed",
+    thu: "Thu",
+    fri: "Fri",
+    sat: "Sat",
+  };
+  if (sanitizedPayload.vehicles && Array.isArray(sanitizedPayload.vehicles)) {
+    sanitizedPayload.vehicles = sanitizedPayload.vehicles.map((vehicle) => {
+      if (vehicle.schedule_days && typeof vehicle.schedule_days === "string") {
+        vehicle.schedule_days = vehicle.schedule_days
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean)
+          .map((d) => dayNameMap[d.toLowerCase()] || d)
+          .join(",");
+      }
+      return vehicle;
+    });
+  }
+
   const data = {
     createdBy: userInfo._id,
     updatedBy: userInfo._id,
@@ -121,6 +145,30 @@ service.update = async (userInfo, id, payload) => {
       ...vehicle,
       worker: vehicle.worker === "" ? undefined : vehicle.worker,
     }));
+  }
+
+  // Normalize schedule_days in vehicles
+  const dayNameMap = {
+    sun: "Sun",
+    mon: "Mon",
+    tue: "Tue",
+    wed: "Wed",
+    thu: "Thu",
+    fri: "Fri",
+    sat: "Sat",
+  };
+  if (sanitizedPayload.vehicles && Array.isArray(sanitizedPayload.vehicles)) {
+    sanitizedPayload.vehicles = sanitizedPayload.vehicles.map((vehicle) => {
+      if (vehicle.schedule_days && typeof vehicle.schedule_days === "string") {
+        vehicle.schedule_days = vehicle.schedule_days
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean)
+          .map((d) => dayNameMap[d.toLowerCase()] || d)
+          .join(",");
+      }
+      return vehicle;
+    });
   }
 
   await EnquiryModel.updateOne({ _id: id }, { $set: sanitizedPayload });

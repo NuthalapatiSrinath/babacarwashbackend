@@ -230,6 +230,8 @@ service.create = async (userInfo, payload) => {
 
   const data = {
     createdBy: userInfo._id,
+    createdByName: userInfo.name || "Unknown",
+    createdSource: "Admin Panel",
     updatedBy: userInfo._id,
     id,
     ...payload,
@@ -682,7 +684,13 @@ service.monthlyStatement = async (userInfo, query) => {
         }
         totalTips += car.tips || 0;
       });
-      return { data: carList, total: carList.length, columnTotals, grandTotal, totalTips };
+      return {
+        data: carList,
+        total: carList.length,
+        columnTotals,
+        grandTotal,
+        totalTips,
+      };
     }
 
     // Note: Excel logic uses the same data structure below
@@ -734,12 +742,20 @@ service.monthlyStatement = async (userInfo, query) => {
     let totalTips = 0;
     summaryData.forEach((w) => {
       if (w.dailyCounts) {
-        w.dailyCounts.forEach((c, i) => { columnTotals[i] += c || 0; });
+        w.dailyCounts.forEach((c, i) => {
+          columnTotals[i] += c || 0;
+        });
         grandTotal += w.dailyCounts.reduce((s, c) => s + (c || 0), 0);
       }
       totalTips += w.tips || 0;
     });
-    return { data: summaryData, total: summaryData.length, columnTotals, grandTotal, totalTips };
+    return {
+      data: summaryData,
+      total: summaryData.length,
+      columnTotals,
+      grandTotal,
+      totalTips,
+    };
   }
 
   // =========================================================

@@ -822,11 +822,19 @@ service.monthlyStatement = async (userInfo, query) => {
     let grandTotal = 0;
     let totalTips = 0;
     workerList.forEach((w) => {
-      w.daily.forEach((c, i) => { columnTotals[i] += c || 0; });
+      w.daily.forEach((c, i) => {
+        columnTotals[i] += c || 0;
+      });
       grandTotal += w.totalCars || 0;
       totalTips += w.amount || 0;
     });
-    return { data: workerList, total: workerList.length, columnTotals, grandTotal, totalTips };
+    return {
+      data: workerList,
+      total: workerList.length,
+      columnTotals,
+      grandTotal,
+      totalTips,
+    };
   }
 
   // ✅ 2. Return Excel Workbook

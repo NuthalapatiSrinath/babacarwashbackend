@@ -163,6 +163,10 @@ cron.run = async (targetDate = null) => {
           location: iterator.location,
           building: iterator.building._id,
           createdBy: isManualRun ? "Manual Scheduler" : "Cron Scheduler",
+          createdByName: isManualRun ? "Manual Scheduler" : "Cron Scheduler",
+          createdSource: isManualRun
+            ? "Admin Panel (Run Scheduler)"
+            : "Cron Job",
           ...(!isManualRun && iterator.building.schedule_today
             ? { immediate: true }
             : null),
@@ -213,11 +217,11 @@ cron.run = async (targetDate = null) => {
             vehicle.schedule_days[0] &&
             typeof vehicle.schedule_days[0] === "string"
           ) {
-            // Format: ["Mon,Tue,Wed,Thu,Fri,Sat,Sun"]
-            const daysString = vehicle.schedule_days.join(",");
-            isMatchFound = daysString.includes(targetDayName);
+            // Format: ["Mon,Tue,Wed,Thu,Fri,Sat,Sun"] — case-insensitive match
+            const daysString = vehicle.schedule_days.join(",").toLowerCase();
+            isMatchFound = daysString.includes(targetDayName.toLowerCase());
             console.log(
-              `   Checking if "${daysString}" includes "${targetDayName}": ${isMatchFound}`,
+              `   Checking if "${daysString}" includes "${targetDayName.toLowerCase()}": ${isMatchFound}`,
             );
           }
         }
@@ -236,6 +240,10 @@ cron.run = async (targetDate = null) => {
             location: iterator.location,
             building: iterator.building._id,
             createdBy: isManualRun ? "Manual Scheduler" : "Cron Scheduler",
+            createdByName: isManualRun ? "Manual Scheduler" : "Cron Scheduler",
+            createdSource: isManualRun
+              ? "Admin Panel (Run Scheduler)"
+              : "Cron Job",
             ...(!isManualRun && iterator.building.schedule_today
               ? { immediate: true }
               : null),

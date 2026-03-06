@@ -16,18 +16,34 @@ const schema = new mongoose.Schema(
       default: "user",
     },
 
-    // GRANULAR PERMISSIONS (Controlled by Admin Panel)
-    // Structure: { moduleName: { action: boolean } }
+    // GRANULAR PERMISSIONS (Controlled by Super Admin for manager role)
+    // Structure: { moduleName: { view, create, edit, delete } }
     permissions: {
       type: Object,
       default: {
+        dashboard: { view: true },
+        customers: { view: false, create: false, edit: false, delete: false },
+        workers: { view: false, create: false, edit: false, delete: false },
         staff: { view: false, create: false, edit: false, delete: false },
         attendance: { view: false, create: false, edit: false, delete: false },
-        sites: { view: false, create: false, edit: false, delete: false },
-        malls: { view: false, create: false, edit: false, delete: false },
+        supervisors: { view: false, create: false, edit: false, delete: false },
+        washes: { view: false, create: false, edit: false, delete: false },
+        payments: { view: false, create: false, edit: false, delete: false },
+        workRecords: { view: false },
+        collectionSheet: { view: false },
+        settlements: { view: false, create: false, edit: false, delete: false },
+        pendingPayments: { view: false },
+        yearlyRecords: { view: false },
+        pricing: { view: false, edit: false },
+        locations: { view: false, create: false, edit: false, delete: false },
         buildings: { view: false, create: false, edit: false, delete: false },
-        customers: { view: false, create: false, edit: false, delete: false },
-        // Add more modules as needed
+        malls: { view: false, create: false, edit: false, delete: false },
+        sites: { view: false, create: false, edit: false, delete: false },
+        vehicles: { view: false, create: false, edit: false, delete: false },
+        enquiry: { view: false, edit: false, delete: false },
+        bookings: { view: false, edit: false, delete: false },
+        importLogs: { view: false },
+        settings: { view: false, edit: false },
       },
     },
 

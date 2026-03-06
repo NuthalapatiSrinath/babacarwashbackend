@@ -399,6 +399,29 @@ service.create = async (userInfo, payload) => {
   const userExists = await CustomersModel.countDocuments(findUserQuery);
   if (userExists) throw "USER-EXISTS";
 
+  // Normalize schedule_days capitalization for all vehicles
+  const dayNameMap = {
+    sun: "Sun",
+    mon: "Mon",
+    tue: "Tue",
+    wed: "Wed",
+    thu: "Thu",
+    fri: "Fri",
+    sat: "Sat",
+  };
+  if (payload.vehicles && payload.vehicles.length > 0) {
+    for (const vehicle of payload.vehicles) {
+      if (vehicle.schedule_days && typeof vehicle.schedule_days === "string") {
+        vehicle.schedule_days = vehicle.schedule_days
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean)
+          .map((d) => dayNameMap[d.toLowerCase()] || d)
+          .join(",");
+      }
+    }
+  }
+
   const id = await CounterService.id("customers");
   const data = {
     createdBy: userInfo._id,
@@ -433,7 +456,32 @@ service.update = async (userInfo, id, payload) => {
     const currentCustomer = await CustomersModel.findById(id).lean();
 
     // Process each vehicle
+    const dayNameMap = {
+      sun: "Sun",
+      mon: "Mon",
+      tue: "Tue",
+      wed: "Wed",
+      thu: "Thu",
+      fri: "Fri",
+      sat: "Sat",
+      sunday: "Sun",
+      monday: "Mon",
+      tuesday: "Tue",
+      wednesday: "Wed",
+      thursday: "Thu",
+      friday: "Fri",
+      saturday: "Sat",
+    };
     for (const vehicle of payload.vehicles) {
+      // Normalize schedule_days capitalization (e.g., "thu" → "Thu")
+      if (vehicle.schedule_days && typeof vehicle.schedule_days === "string") {
+        vehicle.schedule_days = vehicle.schedule_days
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean)
+          .map((d) => dayNameMap[d.toLowerCase()] || d)
+          .join(",");
+      }
       // For existing vehicles
       if (vehicle._id && currentCustomer) {
         const existingVehicle = currentCustomer.vehicles?.find(
@@ -764,9 +812,27 @@ service.importData = async (userInfo, excelData) => {
           ? data.schedule_days.split(",")
           : data.schedule_days.split(" ");
 
+        const dayNameMap = {
+          sun: "Sun",
+          mon: "Mon",
+          tue: "Tue",
+          wed: "Wed",
+          thu: "Thu",
+          fri: "Fri",
+          sat: "Sat",
+          sunday: "Sun",
+          monday: "Mon",
+          tuesday: "Tue",
+          wednesday: "Wed",
+          thursday: "Thu",
+          friday: "Fri",
+          saturday: "Sat",
+        };
         for (const day of days) {
           let dayValue = day.trim();
           if (dayValue) {
+            // Normalize to proper case (e.g., "thu" → "Thu")
+            dayValue = dayNameMap[dayValue.toLowerCase()] || dayValue;
             schedule_days.push({
               day: dayValue,
               value: CommonHelper.getDayNumber(dayValue),
