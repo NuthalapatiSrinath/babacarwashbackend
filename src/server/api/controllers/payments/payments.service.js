@@ -1132,7 +1132,14 @@ service.monthlyStatement = async (userInfo, query) => {
         item.status === "completed"
           ? item.receipt_no || `RCP${String(item.id).padStart(6, "0")}`
           : "-", // 15. Receipt Number (Only for completed payments)
-      dueDate: moment(item.createdAt).endOf("month").format("DD-MM-YYYY"), // 16. Payment Due Date (End of billing month)
+      dueDate: item.billing_month
+        ? moment(item.billing_month, "YYYY-MM")
+            .endOf("month")
+            .format("DD-MM-YYYY")
+        : moment(item.createdAt)
+            .subtract(1, "day")
+            .endOf("month")
+            .format("DD-MM-YYYY"), // 16. Payment Due Date (End of billing month)
       remarks: item.notes || "-", // 17. Payment Remarks
       customerNotes: item.customer?.notes || "-", // 18. Customer Notes
 
@@ -1827,7 +1834,14 @@ service.monthlyStatement = async (userInfo, query) => {
         item.status === "completed"
           ? item.receipt_no || `RCP${String(item.id).padStart(6, "0")}`
           : "-", // Only for completed payments
-      dueDate: moment(item.createdAt).endOf("month").format("DD-MM-YYYY"),
+      dueDate: item.billing_month
+        ? moment(item.billing_month, "YYYY-MM")
+            .endOf("month")
+            .format("DD-MM-YYYY")
+        : moment(item.createdAt)
+            .subtract(1, "day")
+            .endOf("month")
+            .format("DD-MM-YYYY"),
       remarks: item.notes || "-",
       customerNotes: item.customer?.notes || "-",
 

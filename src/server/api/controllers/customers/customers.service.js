@@ -256,9 +256,8 @@ service.list = async (userInfo, query) => {
       "total pending payments",
     );
 
-    // Group payments by vehicle (registration_no) and calculate dues
-    const vehicleDuesMap = {};
-    const customerDuesMap = {};
+    // Group by vehicle and keep only the LATEST pending payment (to avoid double-counting carried-forward balances)
+    const vehicleLatestPaymentMap = {};
 
     allPendingPayments.forEach((payment) => {
       const customerId = payment.customer?.toString();
@@ -275,19 +274,49 @@ service.list = async (userInfo, query) => {
         return;
       }
 
+      const vehicleKey = `${customerId}_${registrationNo}`;
+      const paymentDate = new Date(payment.createdAt || payment._id).getTime();
+
+      // Keep only the most recent payment for each vehicle (latest will have accumulated balance)
+      if (
+        !vehicleLatestPaymentMap[vehicleKey] ||
+        paymentDate >
+          new Date(
+            vehicleLatestPaymentMap[vehicleKey].createdAt ||
+              vehicleLatestPaymentMap[vehicleKey]._id,
+          ).getTime()
+      ) {
+        vehicleLatestPaymentMap[vehicleKey] = payment;
+      }
+    });
+
+    console.log(
+      "🔍 [CUSTOMER LIST] After deduplication:",
+      Object.keys(vehicleLatestPaymentMap).length,
+      "latest payments per vehicle",
+    );
+
+    // Now calculate dues from only the latest payments (avoiding double-counting)
+    const vehicleDuesMap = {};
+    const customerDuesMap = {};
+
+    Object.values(vehicleLatestPaymentMap).forEach((payment) => {
+      const customerId = payment.customer?.toString();
+      const registrationNo = payment.vehicle?.registration_no;
+      const vehicleKey = `${customerId}_${registrationNo}`;
+
+      // Use total_amount instead of amount_charged to include old_balance (carried forward dues)
       const amountDue =
-        (payment.amount_charged || 0) - (payment.amount_paid || 0);
+        (payment.total_amount || 0) - (payment.amount_paid || 0);
 
       if (amountDue > 0) {
-        // Track vehicle-wise dues
-        const vehicleKey = `${customerId}_${registrationNo}`;
-        if (!vehicleDuesMap[vehicleKey]) {
-          vehicleDuesMap[vehicleKey] = { totalDue: 0, pendingCount: 0 };
-        }
-        vehicleDuesMap[vehicleKey].totalDue += amountDue;
-        vehicleDuesMap[vehicleKey].pendingCount += 1;
+        // Track vehicle-wise dues (only 1 payment per vehicle now)
+        vehicleDuesMap[vehicleKey] = {
+          totalDue: amountDue,
+          pendingCount: 1, // Always 1 since we only count latest
+        };
 
-        // Track customer-wise dues (sum of all vehicles)
+        // Track customer-wise dues (sum across all vehicles)
         if (!customerDuesMap[customerId]) {
           customerDuesMap[customerId] = { totalDue: 0, pendingCount: 0 };
         }
@@ -559,16 +588,29 @@ service.checkPendingDues = async (customerId) => {
       status: "pending",
     };
 
-    const pendingPayments = await PaymentsModel.find(query).lean();
+    const pendingPayments = await PaymentsModel.find(query)
+      .sort({ createdAt: -1 }) // Sort by newest first
+      .lean();
 
     if (pendingPayments && pendingPayments.length > 0) {
-      // Calculate actual pending amount: amount_charged - amount_paid
+      // Group by vehicle and keep only the LATEST pending payment per vehicle
+      // (to avoid double-counting when balances are carried forward)
+      const vehicleLatestPaymentMap = {};
+
+      pendingPayments.forEach((payment) => {
+        const vehicleId = payment.vehicle?._id?.toString() || "no_vehicle";
+        if (!vehicleLatestPaymentMap[vehicleId]) {
+          vehicleLatestPaymentMap[vehicleId] = payment;
+        }
+      });
+
+      // Calculate actual pending amount: total_amount - amount_paid (includes old_balance)
       const paymentsWithDues = [];
       let totalDue = 0;
 
-      pendingPayments.forEach((payment) => {
+      Object.values(vehicleLatestPaymentMap).forEach((payment) => {
         const amountDue =
-          (payment.amount_charged || 0) - (payment.amount_paid || 0);
+          (payment.total_amount || 0) - (payment.amount_paid || 0);
 
         if (amountDue > 0) {
           paymentsWithDues.push({
@@ -632,38 +674,29 @@ service.checkVehiclePendingDues = async (customerId, vehicleId) => {
       "vehicle.registration_no": vehicle.registration_no,
       isDeleted: false,
       status: "pending",
-    }).lean();
+    })
+      .sort({ createdAt: -1 }) // Sort by newest first - latest payment will have accumulated balance
+      .lean();
 
     console.log(
       `📊 [checkVehiclePendingDues] Found ${pendingPayments.length} pending payments for vehicle ${vehicle.registration_no}`,
     );
 
     if (pendingPayments && pendingPayments.length > 0) {
-      // Calculate actual pending amount: amount_charged - amount_paid
-      const paymentsWithDues = [];
-      let totalDue = 0;
+      // Only use the LATEST pending payment (it contains accumulated balance including carried-forward amounts)
+      const latestPayment = pendingPayments[0]; // Already sorted by newest first
+      const amountDue =
+        (latestPayment.total_amount || 0) - (latestPayment.amount_paid || 0);
 
-      pendingPayments.forEach((payment) => {
-        const amountDue =
-          (payment.amount_charged || 0) - (payment.amount_paid || 0);
-        if (amountDue > 0) {
-          paymentsWithDues.push({
-            ...payment,
-            amountDue: amountDue,
-          });
-          totalDue += amountDue;
-        }
-      });
-
-      if (paymentsWithDues.length > 0) {
+      if (amountDue > 0) {
         console.log(
-          `💰 [checkVehiclePendingDues] Vehicle ${vehicle.registration_no} has AED ${totalDue} pending dues`,
+          `💰 [checkVehiclePendingDues] Vehicle ${vehicle.registration_no} has AED ${amountDue} pending dues`,
         );
         return {
           hasPendingDues: true,
-          totalDue: totalDue,
-          pendingCount: paymentsWithDues.length,
-          payments: paymentsWithDues,
+          totalDue: amountDue,
+          pendingCount: 1, // Always 1 since we only count the latest
+          payments: [{ ...latestPayment, amountDue }],
           vehicleNo: vehicle.registration_no,
         };
       }

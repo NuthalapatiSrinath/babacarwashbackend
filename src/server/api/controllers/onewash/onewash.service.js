@@ -778,6 +778,16 @@ service.monthlyStatement = async (userInfo, query) => {
     },
   };
 
+  // Filter by service_type if provided (e.g., "mall")
+  if (query.service_type) {
+    findQuery.service_type = query.service_type;
+  }
+
+  // Filter by worker if workerId provided
+  if (query.workerId && query.workerId.trim() !== "") {
+    findQuery.worker = query.workerId;
+  }
+
   const data = await OneWashModel.find(findQuery)
     .sort({ _id: -1 })
     .populate([
@@ -797,6 +807,8 @@ service.monthlyStatement = async (userInfo, query) => {
         const wid = iterator.worker._id.toString();
         if (!workerMap[wid]) {
           workerMap[wid] = {
+            workerId: wid,
+            workerName: iterator.worker.name?.trim() || "Unknown",
             name: iterator.worker.name?.trim() || "Unknown",
             code: iterator.worker.employeeCode || "N/A",
             totalCars: 0,

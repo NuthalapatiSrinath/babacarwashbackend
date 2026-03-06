@@ -470,7 +470,7 @@ service.monthlyStatement = async (userInfo, query) => {
   const year = moment(findQuery.assignedDate.$gte).format("YYYY");
 
   // =========================================================
-  // SCENARIO 1: WORKER SELECTED - SHOW SCHEDULE
+  // SCENARIO 1: WORKER SELECTED (Residence only) - SHOW SCHEDULE
   // ✅ FIX: For past days use historical jobs (schedule at that time),
   //         for future days use current schedule from customer document.
   //         This way changing schedule only affects future, not past.
