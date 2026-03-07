@@ -22,7 +22,7 @@ service.list = async (queryParams) => {
 
   const total = await UsersModel.countDocuments(findQuery);
   const data = await UsersModel.find(findQuery)
-    .select("-hPassword -password")
+    .select("-hPassword +password")
     .sort({ createdAt: -1 })
     .skip(paginationData.skip)
     .limit(paginationData.limit)
@@ -38,7 +38,7 @@ service.info = async (id) => {
     role: "manager",
     isDeleted: { $ne: true },
   })
-    .select("-hPassword -password")
+    .select("-hPassword +password")
     .lean();
 
   if (!data) throw "NOT_FOUND";
@@ -86,7 +86,7 @@ service.create = async (payload) => {
   const staffData = {
     name: payload.name,
     number: payload.number,
-    password: passwordHash,
+    password: payload.password,
     hPassword: passwordHash,
     role: "manager",
     permissions: payload.permissions || fullAccessPermissions,
@@ -96,7 +96,6 @@ service.create = async (payload) => {
   const created = await new UsersModel(staffData).save();
   const result = created.toObject();
   delete result.hPassword;
-  delete result.password;
   return result;
 };
 
@@ -124,7 +123,7 @@ service.update = async (id, payload) => {
   }
   if (payload.password) {
     const hash = AuthHelper.getPasswordHash(payload.password);
-    updateData.password = hash;
+    updateData.password = payload.password;
     updateData.hPassword = hash;
   }
   if (typeof payload.isBlocked === "boolean") {
@@ -132,7 +131,7 @@ service.update = async (id, payload) => {
   }
 
   return UsersModel.findByIdAndUpdate(id, { $set: updateData }, { new: true })
-    .select("-hPassword -password")
+    .select("-hPassword +password")
     .lean();
 };
 
