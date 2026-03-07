@@ -556,6 +556,13 @@ service.update = async (userInfo, id, payload) => {
 };
 
 service.delete = async (userInfo, id, reason) => {
+  const customer = await CustomersModel.findOne({ _id: id });
+
+  // Modify phone number to free it up for reuse (avoid unique index conflict)
+  const deletedNumber = customer?.number
+    ? `deleted_${customer.number}_${Date.now()}`
+    : customer?.number;
+
   return await CustomersModel.updateOne(
     { _id: id },
     {
@@ -563,6 +570,7 @@ service.delete = async (userInfo, id, reason) => {
       deletedBy: userInfo._id,
       deletedAt: new Date(),
       deleteReason: reason || null,
+      number: deletedNumber,
     },
   );
 };

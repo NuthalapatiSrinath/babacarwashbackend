@@ -19,26 +19,34 @@ service.list = async (userInfo, query) => {
   const findQuery = { isDeleted: false };
   if (!query.worker) findQuery.worker = { $ne: "" };
 
-  const findWorkerQuery = { isDeleted: false };
   let limitToWorkerIds = null;
 
-  if (userInfo.service_type === "mall" && isValidId(userInfo.mall)) {
-    findWorkerQuery.malls = { $in: [userInfo.mall] };
-    const workers = await WorkersModel.find(findWorkerQuery)
-      .select("_id")
-      .lean();
-    limitToWorkerIds = workers.map((w) => w._id);
-  } else if (
-    userInfo.service_type === "residence" &&
-    Array.isArray(userInfo.buildings)
-  ) {
-    const validBuildings = userInfo.buildings.filter(isValidId);
-    if (validBuildings.length > 0) {
-      findWorkerQuery.buildings = { $in: validBuildings };
+  // If explicit worker IDs are sent (e.g. from supervisor frontend), use those directly
+  if (query.workers) {
+    limitToWorkerIds = Array.isArray(query.workers)
+      ? query.workers
+      : [query.workers];
+  } else {
+    const findWorkerQuery = { isDeleted: false };
+
+    if (userInfo.service_type === "mall" && isValidId(userInfo.mall)) {
+      findWorkerQuery.malls = { $in: [userInfo.mall] };
       const workers = await WorkersModel.find(findWorkerQuery)
         .select("_id")
         .lean();
       limitToWorkerIds = workers.map((w) => w._id);
+    } else if (
+      userInfo.service_type === "residence" &&
+      Array.isArray(userInfo.buildings)
+    ) {
+      const validBuildings = userInfo.buildings.filter(isValidId);
+      if (validBuildings.length > 0) {
+        findWorkerQuery.buildings = { $in: validBuildings };
+        const workers = await WorkersModel.find(findWorkerQuery)
+          .select("_id")
+          .lean();
+        limitToWorkerIds = workers.map((w) => w._id);
+      }
     }
   }
 

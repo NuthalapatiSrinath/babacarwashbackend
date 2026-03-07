@@ -20,10 +20,10 @@ service.dashboardAll = async (userInfo, query) => {
   try {
     const startTime = Date.now();
     console.log("🚀 Dashboard fetch started...");
-    
+
     // Generate cache key based on query parameters
     const cacheKey = `dashboard_${JSON.stringify(query || {})}`;
-    
+
     // Check cache first
     const cachedData = dashboardCache.get(cacheKey);
     if (cachedData) {
@@ -34,7 +34,9 @@ service.dashboardAll = async (userInfo, query) => {
         _meta: {
           ...cachedData._meta,
           cached: true,
-          cacheAge: Math.round((Date.now() - cachedData._meta.timestamp) / 1000),
+          cacheAge: Math.round(
+            (Date.now() - cachedData._meta.timestamp) / 1000,
+          ),
           loadTime: `${elapsedTime}s (cached)`,
         },
       };
@@ -80,69 +82,189 @@ service.dashboardAll = async (userInfo, query) => {
                 $group: {
                   _id: null,
                   total: { $sum: 1 },
-                  completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-                  pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
-                  cancelled: { $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] } },
-                  residence: { $sum: { $cond: [{ $eq: ["$service_type", "residence"] }, 1, 0] } },
-                  commercial: { $sum: { $cond: [{ $eq: ["$service_type", "commercial"] }, 1, 0] } },
-                  mall: { $sum: { $cond: [{ $eq: ["$service_type", "mall"] }, 1, 0] } },
-                  onewash: { $sum: { $cond: [{ $eq: ["$service_type", "onewash"] }, 1, 0] } },
+                  completed: {
+                    $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+                  },
+                  pending: {
+                    $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+                  },
+                  cancelled: {
+                    $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+                  },
+                  residence: {
+                    $sum: {
+                      $cond: [{ $eq: ["$service_type", "residence"] }, 1, 0],
+                    },
+                  },
+                  commercial: {
+                    $sum: {
+                      $cond: [{ $eq: ["$service_type", "commercial"] }, 1, 0],
+                    },
+                  },
+                  mall: {
+                    $sum: { $cond: [{ $eq: ["$service_type", "mall"] }, 1, 0] },
+                  },
+                  onewash: {
+                    $sum: {
+                      $cond: [{ $eq: ["$service_type", "onewash"] }, 1, 0],
+                    },
+                  },
                 },
               },
             ],
             chartData: [
-              { $match: { status: { $in: ["completed", "pending"] }, createdAt: { $gte: yearStart, $lt: yearEnd } } },
-              { $group: { _id: { month: { $month: "$createdAt" }, status: "$status" }, count: { $sum: 1 } } },
+              {
+                $match: {
+                  status: { $in: ["completed", "pending"] },
+                  createdAt: { $gte: yearStart, $lt: yearEnd },
+                },
+              },
+              {
+                $group: {
+                  _id: { month: { $month: "$createdAt" }, status: "$status" },
+                  count: { $sum: 1 },
+                },
+              },
               { $sort: { "_id.month": 1 } },
               { $limit: 24 },
             ],
             serviceDistribution: [
-              { $match: { service_type: { $exists: true, $ne: null, $ne: "" }, ...(hasDateFilter ? dateFilter : {}) } },
+              {
+                $match: {
+                  service_type: { $exists: true, $ne: null, $ne: "" },
+                  ...(hasDateFilter ? dateFilter : {}),
+                },
+              },
               { $limit: 50000 },
               {
                 $group: {
                   _id: "$service_type",
                   count: { $sum: 1 },
-                  completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-                  pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
-                  cancelled: { $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] } },
+                  completed: {
+                    $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+                  },
+                  pending: {
+                    $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+                  },
+                  cancelled: {
+                    $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+                  },
                 },
               },
               { $sort: { count: -1 } },
             ],
             topWorkers: [
-              { $match: { status: "completed", worker: { $exists: true, $ne: null }, ...(hasDateFilter ? dateFilter : {}) } },
+              {
+                $match: {
+                  status: "completed",
+                  worker: { $exists: true, $ne: null },
+                  ...(hasDateFilter ? dateFilter : {}),
+                },
+              },
               { $limit: 100000 },
               { $group: { _id: "$worker", totalJobs: { $sum: 1 } } },
               { $sort: { totalJobs: -1 } },
               { $limit: 10 },
-              { $lookup: { from: "workers", localField: "_id", foreignField: "_id", as: "workerInfo" } },
-              { $unwind: { path: "$workerInfo", preserveNullAndEmptyArrays: true } },
+              {
+                $lookup: {
+                  from: "workers",
+                  localField: "_id",
+                  foreignField: "_id",
+                  as: "workerInfo",
+                },
+              },
+              {
+                $unwind: {
+                  path: "$workerInfo",
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
             ],
             buildingAnalytics: [
-              { $match: { customer: { $exists: true, $ne: null }, ...(hasDateFilter ? dateFilter : {}) } },
+              {
+                $match: {
+                  customer: { $exists: true, $ne: null },
+                  ...(hasDateFilter ? dateFilter : {}),
+                },
+              },
               { $limit: 50000 },
-              { $lookup: { from: "customers", localField: "customer", foreignField: "_id", as: "customerInfo" } },
-              { $unwind: { path: "$customerInfo", preserveNullAndEmptyArrays: true } },
+              {
+                $lookup: {
+                  from: "customers",
+                  localField: "customer",
+                  foreignField: "_id",
+                  as: "customerInfo",
+                },
+              },
+              {
+                $unwind: {
+                  path: "$customerInfo",
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
               {
                 $group: {
                   _id: "$customerInfo.building",
                   totalJobs: { $sum: 1 },
-                  completedJobs: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+                  completedJobs: {
+                    $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+                  },
                 },
               },
               { $match: { _id: { $exists: true, $ne: null } } },
               { $sort: { totalJobs: -1 } },
               { $limit: 20 },
-              { $lookup: { from: "buildings", localField: "_id", foreignField: "_id", as: "buildingInfo" } },
-              { $unwind: { path: "$buildingInfo", preserveNullAndEmptyArrays: true } },
+              {
+                $lookup: {
+                  from: "buildings",
+                  localField: "_id",
+                  foreignField: "_id",
+                  as: "buildingInfo",
+                },
+              },
+              {
+                $unwind: {
+                  path: "$buildingInfo",
+                  preserveNullAndEmptyArrays: true,
+                },
+              },
             ],
-            todayJobs: [{ $match: { createdAt: { $gte: todayStart } } }, { $count: "count" }],
-            yesterdayJobs: [{ $match: { createdAt: { $gte: yesterdayStart, $lt: todayStart } } }, { $count: "count" }],
-            thisWeekJobs: [{ $match: { createdAt: { $gte: thisWeekStart } } }, { $count: "count" }],
-            lastWeekJobs: [{ $match: { createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd } } }, { $count: "count" }],
-            thisMonthJobs: [{ $match: { createdAt: { $gte: thisMonthStart } } }, { $count: "count" }],
-            lastMonthJobs: [{ $match: { createdAt: { $gte: lastMonthStart, $lt: lastMonthEnd } } }, { $count: "count" }],
+            todayJobs: [
+              { $match: { createdAt: { $gte: todayStart } } },
+              { $count: "count" },
+            ],
+            yesterdayJobs: [
+              {
+                $match: {
+                  createdAt: { $gte: yesterdayStart, $lt: todayStart },
+                },
+              },
+              { $count: "count" },
+            ],
+            thisWeekJobs: [
+              { $match: { createdAt: { $gte: thisWeekStart } } },
+              { $count: "count" },
+            ],
+            lastWeekJobs: [
+              {
+                $match: {
+                  createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd },
+                },
+              },
+              { $count: "count" },
+            ],
+            thisMonthJobs: [
+              { $match: { createdAt: { $gte: thisMonthStart } } },
+              { $count: "count" },
+            ],
+            lastMonthJobs: [
+              {
+                $match: {
+                  createdAt: { $gte: lastMonthStart, $lt: lastMonthEnd },
+                },
+              },
+              { $count: "count" },
+            ],
           },
         },
       ]),
@@ -166,45 +288,170 @@ service.dashboardAll = async (userInfo, query) => {
               },
             ],
             residenceChartData: [
-              { $match: { status: { $in: ["completed", "pending"] }, createdAt: { $gte: yearStart, $lt: yearEnd }, onewash: false } },
-              { $group: { _id: { month: { $month: "$createdAt" }, status: "$status" }, count: { $sum: 1 } } },
+              {
+                $match: {
+                  status: { $in: ["completed", "pending"] },
+                  createdAt: { $gte: yearStart, $lt: yearEnd },
+                  onewash: false,
+                },
+              },
+              {
+                $group: {
+                  _id: { month: { $month: "$createdAt" }, status: "$status" },
+                  count: { $sum: 1 },
+                },
+              },
               { $sort: { "_id.month": 1 } },
               { $limit: 24 },
             ],
             onewashChartData: [
-              { $match: { status: { $in: ["completed", "pending"] }, createdAt: { $gte: yearStart, $lt: yearEnd }, onewash: true } },
-              { $group: { _id: { month: { $month: "$createdAt" }, status: "$status" }, count: { $sum: 1 } } },
+              {
+                $match: {
+                  status: { $in: ["completed", "pending"] },
+                  createdAt: { $gte: yearStart, $lt: yearEnd },
+                  onewash: true,
+                },
+              },
+              {
+                $group: {
+                  _id: { month: { $month: "$createdAt" }, status: "$status" },
+                  count: { $sum: 1 },
+                },
+              },
               { $sort: { "_id.month": 1 } },
               { $limit: 24 },
             ],
             revenueTrends: [
-              { $match: { status: "completed", createdAt: { $gte: hasDateFilter ? dateFilter.createdAt.$gte : last30Days } } },
+              {
+                $match: {
+                  status: "completed",
+                  createdAt: {
+                    $gte: hasDateFilter
+                      ? dateFilter.createdAt.$gte
+                      : last30Days,
+                  },
+                },
+              },
               { $limit: 50000 },
-              { $group: { _id: { date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } } }, revenue: { $sum: "$amount_paid" }, count: { $sum: 1 } } },
+              {
+                $group: {
+                  _id: {
+                    date: {
+                      $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
+                    },
+                  },
+                  revenue: { $sum: "$amount_paid" },
+                  count: { $sum: 1 },
+                },
+              },
               { $sort: { "_id.date": 1 } },
               { $limit: 90 },
             ],
             topWorkersRevenue: [
-              { $match: { status: "completed", worker: { $exists: true, $ne: null }, ...(hasDateFilter ? dateFilter : {}) } },
+              {
+                $match: {
+                  status: "completed",
+                  worker: { $exists: true, $ne: null },
+                  ...(hasDateFilter ? dateFilter : {}),
+                },
+              },
               { $limit: 100000 },
-              { $group: { _id: "$worker", totalRevenue: { $sum: "$amount_paid" }, totalJobs: { $sum: 1 } } },
+              {
+                $group: {
+                  _id: "$worker",
+                  totalRevenue: { $sum: "$amount_paid" },
+                  totalJobs: { $sum: 1 },
+                },
+              },
               { $sort: { totalRevenue: -1 } },
               { $limit: 1 },
             ],
             serviceRevenue: [
-              { $match: { status: "completed", job: { $exists: true, $ne: null }, ...(hasDateFilter ? dateFilter : {}) } },
+              {
+                $match: {
+                  status: "completed",
+                  job: { $exists: true, $ne: null },
+                  ...(hasDateFilter ? dateFilter : {}),
+                },
+              },
               { $limit: 50000 },
-              { $lookup: { from: "jobs", localField: "job", foreignField: "_id", as: "jobInfo" } },
-              { $unwind: { path: "$jobInfo", preserveNullAndEmptyArrays: true } },
-              { $match: { "jobInfo.service_type": { $exists: true, $ne: null } } },
-              { $group: { _id: "$jobInfo.service_type", revenue: { $sum: "$amount_paid" } } },
+              {
+                $lookup: {
+                  from: "jobs",
+                  localField: "job",
+                  foreignField: "_id",
+                  as: "jobInfo",
+                },
+              },
+              {
+                $unwind: { path: "$jobInfo", preserveNullAndEmptyArrays: true },
+              },
+              {
+                $match: {
+                  "jobInfo.service_type": { $exists: true, $ne: null },
+                },
+              },
+              {
+                $group: {
+                  _id: "$jobInfo.service_type",
+                  revenue: { $sum: "$amount_paid" },
+                },
+              },
             ],
-            todayRevenue: [{ $match: { status: "completed", createdAt: { $gte: todayStart } } }, { $group: { _id: null, total: { $sum: "$amount_paid" } } }],
-            yesterdayRevenue: [{ $match: { status: "completed", createdAt: { $gte: yesterdayStart, $lt: todayStart } } }, { $group: { _id: null, total: { $sum: "$amount_paid" } } }],
-            thisWeekRevenue: [{ $match: { status: "completed", createdAt: { $gte: thisWeekStart } } }, { $group: { _id: null, total: { $sum: "$amount_paid" } } }],
-            lastWeekRevenue: [{ $match: { status: "completed", createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd } } }, { $group: { _id: null, total: { $sum: "$amount_paid" } } }],
-            thisMonthRevenue: [{ $match: { status: "completed", createdAt: { $gte: thisMonthStart } } }, { $group: { _id: null, total: { $sum: "$amount_paid" } } }],
-            lastMonthRevenue: [{ $match: { status: "completed", createdAt: { $gte: lastMonthStart, $lt: lastMonthEnd } } }, { $group: { _id: null, total: { $sum: "$amount_paid" } } }],
+            todayRevenue: [
+              {
+                $match: {
+                  status: "completed",
+                  createdAt: { $gte: todayStart },
+                },
+              },
+              { $group: { _id: null, total: { $sum: "$amount_paid" } } },
+            ],
+            yesterdayRevenue: [
+              {
+                $match: {
+                  status: "completed",
+                  createdAt: { $gte: yesterdayStart, $lt: todayStart },
+                },
+              },
+              { $group: { _id: null, total: { $sum: "$amount_paid" } } },
+            ],
+            thisWeekRevenue: [
+              {
+                $match: {
+                  status: "completed",
+                  createdAt: { $gte: thisWeekStart },
+                },
+              },
+              { $group: { _id: null, total: { $sum: "$amount_paid" } } },
+            ],
+            lastWeekRevenue: [
+              {
+                $match: {
+                  status: "completed",
+                  createdAt: { $gte: lastWeekStart, $lt: lastWeekEnd },
+                },
+              },
+              { $group: { _id: null, total: { $sum: "$amount_paid" } } },
+            ],
+            thisMonthRevenue: [
+              {
+                $match: {
+                  status: "completed",
+                  createdAt: { $gte: thisMonthStart },
+                },
+              },
+              { $group: { _id: null, total: { $sum: "$amount_paid" } } },
+            ],
+            lastMonthRevenue: [
+              {
+                $match: {
+                  status: "completed",
+                  createdAt: { $gte: lastMonthStart, $lt: lastMonthEnd },
+                },
+              },
+              { $group: { _id: null, total: { $sum: "$amount_paid" } } },
+            ],
           },
         },
       ]),
@@ -215,17 +462,68 @@ service.dashboardAll = async (userInfo, query) => {
           { $match: { isDeleted: false } },
           {
             $facet: {
-              counts: [{ $group: { _id: null, total: { $sum: 1 }, active: { $sum: { $cond: [{ $eq: ["$status", 1] }, 1, 0] } }, inactive: { $sum: { $cond: [{ $eq: ["$status", 0] }, 1, 0] } } } }],
-              vehicles: [{ $unwind: { path: "$vehicles", preserveNullAndEmptyArrays: false } }, { $group: { _id: null, totalVehicles: { $sum: 1 } } }],
+              counts: [
+                {
+                  $group: {
+                    _id: null,
+                    total: { $sum: 1 },
+                    active: {
+                      $sum: { $cond: [{ $eq: ["$status", 1] }, 1, 0] },
+                    },
+                    inactive: {
+                      $sum: { $cond: [{ $eq: ["$status", 0] }, 1, 0] },
+                    },
+                  },
+                },
+              ],
+              vehicles: [
+                {
+                  $unwind: {
+                    path: "$vehicles",
+                    preserveNullAndEmptyArrays: false,
+                  },
+                },
+                { $group: { _id: null, totalVehicles: { $sum: 1 } } },
+              ],
             },
           },
         ]),
-        WorkersModel.aggregate([{ $match: { isDeleted: false } }, { $group: { _id: null, total: { $sum: 1 }, active: { $sum: { $cond: [{ $eq: ["$status", 1] }, 1, 0] } }, inactive: { $sum: { $cond: [{ $eq: ["$status", 0] }, 1, 0] } } } }]),
+        WorkersModel.aggregate([
+          { $match: { isDeleted: false } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              active: { $sum: { $cond: [{ $eq: ["$status", 1] }, 1, 0] } },
+              inactive: { $sum: { $cond: [{ $eq: ["$status", 0] }, 1, 0] } },
+            },
+          },
+        ]),
         BuildingsModel.countDocuments({ isDeleted: false }),
-        StaffModel.aggregate([{ $match: { isDeleted: false } }, { $group: { _id: null, total: { $sum: 1 }, active: { $sum: { $cond: [{ $eq: ["$status", 1] }, 1, 0] } } } }]),
+        StaffModel.aggregate([
+          { $match: { isDeleted: false } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              active: { $sum: { $cond: [{ $eq: ["$status", 1] }, 1, 0] } },
+            },
+          },
+        ]),
         OneWashModel.aggregate([
-          { $match: { status: { $in: ["completed", "pending"] }, isDeleted: false, createdAt: { $gte: yearStart, $lt: yearEnd } } },
-          { $group: { _id: { month: { $month: "$createdAt" }, status: "$status" }, count: { $sum: 1 } } },
+          {
+            $match: {
+              status: { $in: ["completed", "pending"] },
+              isDeleted: false,
+              createdAt: { $gte: yearStart, $lt: yearEnd },
+            },
+          },
+          {
+            $group: {
+              _id: { month: { $month: "$createdAt" }, status: "$status" },
+              count: { $sum: 1 },
+            },
+          },
           { $sort: { "_id.month": 1 } },
           { $limit: 24 },
         ]),
@@ -258,18 +556,29 @@ service.dashboardAll = async (userInfo, query) => {
     const thisMonthRevenue = paymentsData[0].thisMonthRevenue[0]?.total || 0;
     const lastMonthRevenue = paymentsData[0].lastMonthRevenue[0]?.total || 0;
 
-    const [customersData, workersData, totalBuildings, staffData, onewashJobsChartData] = simpleCountsData;
+    const [
+      customersData,
+      workersData,
+      totalBuildings,
+      staffData,
+      onewashJobsChartData,
+    ] = simpleCountsData;
     const customerStats = customersData[0].counts[0] || {};
     const totalVehicles = customersData[0].vehicles[0]?.totalVehicles || 0;
     const workerStats = workersData[0] || {};
     const staffStats = staffData[0] || {};
 
     // Process payment stats
-    let totalPayments = 0, collectedPayments = 0, pendingPayments = 0, overduePayments = 0, paymentCount = 0;
+    let totalPayments = 0,
+      collectedPayments = 0,
+      pendingPayments = 0,
+      overduePayments = 0,
+      paymentCount = 0;
     paymentStats.forEach((stat) => {
       paymentCount += stat.count;
       totalPayments += stat.totalAmount || 0;
-      if (stat._id === "collected" || stat._id === "completed") collectedPayments += stat.paidAmount || 0;
+      if (stat._id === "collected" || stat._id === "completed")
+        collectedPayments += stat.paidAmount || 0;
       else if (stat._id === "pending") pendingPayments += stat.totalAmount || 0;
       else if (stat._id === "overdue") overduePayments += stat.totalAmount || 0;
     });
@@ -278,11 +587,17 @@ service.dashboardAll = async (userInfo, query) => {
     const totalJobs = jobStats.total || 0;
     const completedJobs = jobStats.completed || 0;
     const activeWorkers = workerStats.active || 0;
-    const collectionRate = totalPayments > 0 ? (collectedPayments / totalPayments) * 100 : 0;
-    const completionRate = totalJobs > 0 ? (completedJobs / totalJobs) * 100 : 0;
-    const avgPaymentPerJob = completedJobs > 0 ? collectedPayments / completedJobs : null;
-    const avgJobsPerWorker = activeWorkers > 0 ? Math.round((totalJobs / activeWorkers) * 100) / 100 : 0;
-    
+    const collectionRate =
+      totalPayments > 0 ? (collectedPayments / totalPayments) * 100 : 0;
+    const completionRate =
+      totalJobs > 0 ? (completedJobs / totalJobs) * 100 : 0;
+    const avgPaymentPerJob =
+      completedJobs > 0 ? collectedPayments / completedJobs : null;
+    const avgJobsPerWorker =
+      activeWorkers > 0
+        ? Math.round((totalJobs / activeWorkers) * 100) / 100
+        : 0;
+
     console.log("📊 Performance Metrics:", {
       totalJobs,
       activeWorkers,
@@ -292,19 +607,41 @@ service.dashboardAll = async (userInfo, query) => {
 
     // Process chart data
     const processChartData = (data) => {
-      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
       const monthData = {};
       data.forEach(({ _id, count }) => {
         const monthName = monthNames[_id.month - 1];
-        if (!monthData[monthName]) monthData[monthName] = { completed: 0, pending: 0 };
-        monthData[monthName][_id.status === "completed" ? "completed" : "pending"] = count;
+        if (!monthData[monthName])
+          monthData[monthName] = { completed: 0, pending: 0 };
+        monthData[monthName][
+          _id.status === "completed" ? "completed" : "pending"
+        ] = count;
       });
       const months = Object.keys(monthData);
-      return { labels: months, completed: months.map((m) => monthData[m].completed), pending: months.map((m) => monthData[m].pending) };
+      return {
+        labels: months,
+        completed: months.map((m) => monthData[m].completed),
+        pending: months.map((m) => monthData[m].pending),
+      };
     };
 
     // Process top workers - filter out those without worker info
-    const paymentMap = Object.fromEntries(topWorkersPaymentData.map(s => [String(s._id), s.totalRevenue]));
+    const paymentMap = Object.fromEntries(
+      topWorkersPaymentData.map((s) => [String(s._id), s.totalRevenue]),
+    );
     const topWorkers = topWorkersJobData
       .filter((w) => w.workerInfo && w.workerInfo.name) // Only include workers with valid data
       .map((w) => ({
@@ -316,15 +653,20 @@ service.dashboardAll = async (userInfo, query) => {
       }));
 
     // Top performer stats
-    const topPerformer = topWorkersPaymentData.length > 0 ? {
-      workerId: topWorkersPaymentData[0]._id,
-      totalRevenue: topWorkersPaymentData[0].totalRevenue,
-      totalJobs: topWorkersPaymentData[0].totalJobs,
-    } : null;
+    const topPerformer =
+      topWorkersPaymentData.length > 0
+        ? {
+            workerId: topWorkersPaymentData[0]._id,
+            totalRevenue: topWorkersPaymentData[0].totalRevenue,
+            totalJobs: topWorkersPaymentData[0].totalJobs,
+          }
+        : null;
 
     // Process service distribution - ensure all 4 service types always show
-    const revenueMap = Object.fromEntries(serviceDistributionRevenue.map(i => [i._id, i.revenue]));
-    
+    const revenueMap = Object.fromEntries(
+      serviceDistributionRevenue.map((i) => [i._id, i.revenue]),
+    );
+
     // Create a map from existing data
     const existingServicesMap = {};
     serviceDistributionJobs.forEach((item) => {
@@ -370,18 +712,21 @@ service.dashboardAll = async (userInfo, query) => {
     // Comparative data
     const calcChange = (current, previous) => ({
       value: current - previous,
-      percentage: previous > 0 ? (((current - previous) / previous) * 100).toFixed(2) : 0,
+      percentage:
+        previous > 0 ? (((current - previous) / previous) * 100).toFixed(2) : 0,
     });
-    
+
     const comparativeData = {
       daily: {
         today: { jobs: todayJobsCount, revenue: todayRevenue },
         yesterday: { jobs: yesterdayJobsCount, revenue: yesterdayRevenue },
         change: {
           jobs: todayJobsCount - yesterdayJobsCount,
-          jobsPercentage: calcChange(todayJobsCount, yesterdayJobsCount).percentage,
+          jobsPercentage: calcChange(todayJobsCount, yesterdayJobsCount)
+            .percentage,
           revenue: todayRevenue - yesterdayRevenue,
-          revenuePercentage: calcChange(todayRevenue, yesterdayRevenue).percentage,
+          revenuePercentage: calcChange(todayRevenue, yesterdayRevenue)
+            .percentage,
         },
       },
       weekly: {
@@ -389,9 +734,11 @@ service.dashboardAll = async (userInfo, query) => {
         lastWeek: { jobs: lastWeekJobsCount, revenue: lastWeekRevenue },
         change: {
           jobs: thisWeekJobsCount - lastWeekJobsCount,
-          jobsPercentage: calcChange(thisWeekJobsCount, lastWeekJobsCount).percentage,
+          jobsPercentage: calcChange(thisWeekJobsCount, lastWeekJobsCount)
+            .percentage,
           revenue: thisWeekRevenue - lastWeekRevenue,
-          revenuePercentage: calcChange(thisWeekRevenue, lastWeekRevenue).percentage,
+          revenuePercentage: calcChange(thisWeekRevenue, lastWeekRevenue)
+            .percentage,
         },
       },
       monthly: {
@@ -399,9 +746,11 @@ service.dashboardAll = async (userInfo, query) => {
         lastMonth: { jobs: lastMonthJobsCount, revenue: lastMonthRevenue },
         change: {
           jobs: thisMonthJobsCount - lastMonthJobsCount,
-          jobsPercentage: calcChange(thisMonthJobsCount, lastMonthJobsCount).percentage,
+          jobsPercentage: calcChange(thisMonthJobsCount, lastMonthJobsCount)
+            .percentage,
           revenue: thisMonthRevenue - lastMonthRevenue,
-          revenuePercentage: calcChange(thisMonthRevenue, lastMonthRevenue).percentage,
+          revenuePercentage: calcChange(thisMonthRevenue, lastMonthRevenue)
+            .percentage,
         },
       },
     };
@@ -454,10 +803,16 @@ service.dashboardAll = async (userInfo, query) => {
         },
         performance: {
           avgJobsPerWorker: avgJobsPerWorker,
-          avgRevenuePerJob: avgPaymentPerJob ? Math.round(avgPaymentPerJob * 100) / 100 : null,
+          avgRevenuePerJob: avgPaymentPerJob
+            ? Math.round(avgPaymentPerJob * 100) / 100
+            : null,
           completionRate: Math.round(completionRate * 100) / 100,
           collectionRate: Math.round(collectionRate * 100) / 100,
-          activeWorkersPercentage: workerStats.total > 0 ? Math.round((workerStats.active / workerStats.total) * 10000) / 100 : 0,
+          activeWorkersPercentage:
+            workerStats.total > 0
+              ? Math.round((workerStats.active / workerStats.total) * 10000) /
+                100
+              : 0,
           totalVehicles: totalVehicles,
         },
       },
@@ -498,7 +853,6 @@ service.dashboardAll = async (userInfo, query) => {
     throw error;
   }
 };
-
 
 service.admin = async (userInfo, query) => {
   const jobs = {
@@ -575,7 +929,7 @@ service.jobsChart = async (query) => {
 
   const filteredMonths = Object.keys(monthData);
   const completedCounts = filteredMonths.map(
-    (month) => monthData[month].completed
+    (month) => monthData[month].completed,
   );
   const pendingCounts = filteredMonths.map((month) => monthData[month].pending);
 
@@ -641,7 +995,7 @@ service.onewashJobsChart = async (query) => {
 
   const filteredMonths = Object.keys(monthData);
   const completedCounts = filteredMonths.map(
-    (month) => monthData[month].completed
+    (month) => monthData[month].completed,
   );
   const pendingCounts = filteredMonths.map((month) => monthData[month].pending);
 
@@ -707,7 +1061,7 @@ service.paymentsChart = async (query) => {
 
   const filteredMonths = Object.keys(monthData);
   const completedCounts = filteredMonths.map(
-    (month) => monthData[month].completed
+    (month) => monthData[month].completed,
   );
   const pendingCounts = filteredMonths.map((month) => monthData[month].pending);
 
@@ -772,7 +1126,7 @@ service.supervisors = async (userInfo, body) => {
           buildings: {
             $in: (userInfo.buildings || [])
               .filter((b) => b)
-              .map((b) => (typeof b === 'string' ? b.trim() : b.toString()))
+              .map((b) => (typeof b === "string" ? b.trim() : b.toString()))
               .filter((b) => b),
           },
         }
@@ -782,6 +1136,94 @@ service.supervisors = async (userInfo, body) => {
   const workers = await WorkersModel.find(findQuery);
   const workerIds = workers.map((e) => e._id.toString());
 
+  // Use the same 18:30-to-18:30 shift window as the staff app (Dubai time)
+  const momentTz = require("moment-timezone");
+  const now = momentTz().tz("Asia/Dubai");
+  const currentHour = now.hours();
+  const currentMinute = now.minutes();
+
+  let shiftStart, shiftEnd;
+
+  if (body.startDate && body.endDate) {
+    // Reports page sends specific date range — convert to shift-based range
+    // For date "2026-03-07", shift starts at 18:30 on 2026-03-06 and ends at 18:30 on 2026-03-07
+    shiftStart = momentTz
+      .tz(body.startDate, "Asia/Dubai")
+      .subtract(1, "day")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+    shiftEnd = momentTz
+      .tz(body.endDate, "Asia/Dubai")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+  } else if (currentHour < 18 || (currentHour === 18 && currentMinute < 30)) {
+    // Before 18:30 → shift is yesterday 18:30 to today 18:30
+    shiftStart = momentTz()
+      .tz("Asia/Dubai")
+      .subtract(1, "day")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+    shiftEnd = momentTz()
+      .tz("Asia/Dubai")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+  } else {
+    // After 18:30 → shift is today 18:30 to tomorrow 18:30
+    shiftStart = momentTz()
+      .tz("Asia/Dubai")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+    shiftEnd = momentTz()
+      .tz("Asia/Dubai")
+      .add(1, "day")
+      .hours(18)
+      .minutes(30)
+      .seconds(0)
+      .milliseconds(0);
+  }
+
+  // The "shift date" is the date the shift counts towards
+  const shiftDate = shiftStart.clone().add(6, "hours").format("YYYY-MM-DD");
+
+  const dateFilter = { $gte: shiftStart.toDate(), $lte: shiftEnd.toDate() };
+
+  // Today's jobs (filtered by current shift window)
+  const todaysJobs = await OneWashModel.count({
+    isDeleted: false,
+    worker: { $in: workerIds },
+    createdAt: dateFilter,
+  });
+
+  const todaysPayments = await PaymentsModel.aggregate([
+    {
+      $match: {
+        isDeleted: false,
+        worker: { $in: workerIds },
+        status: "completed",
+        createdAt: dateFilter,
+      },
+    },
+    { $group: { _id: "$payment_mode", amount: { $sum: "$amount_paid" } } },
+  ]);
+
+  const todaysAmount = todaysPayments.length
+    ? todaysPayments.reduce((p, c) => p + c.amount, 0)
+    : 0;
+  const todaysCash = todaysPayments.filter((e) => e._id == "cash");
+  const todaysCard = todaysPayments.filter((e) => e._id == "card");
+  const todaysBank = todaysPayments.filter((e) => e._id == "bank transfer");
+
+  // All-time totals
   const totalJobs = await OneWashModel.count({
     isDeleted: false,
     worker: { $in: workerIds },
@@ -800,47 +1242,9 @@ service.supervisors = async (userInfo, body) => {
   const totalAmount = totalPayments.length
     ? totalPayments.reduce((p, c) => p + c.amount, 0)
     : 0;
-  const totalCash = totalPayments.length
-    ? totalPayments.filter((e) => e._id == "cash")
-    : 0;
-  const totalCard = totalPayments.length
-    ? totalPayments.filter((e) => e._id == "card")
-    : 0;
-  const totalBank = totalPayments.length
-    ? totalPayments.filter((e) => e._id == "bank transfer")
-    : 0;
-
-  const findWashQuery = {
-    isDeleted: false,
-    worker: { $in: workerIds },
-    ...(body.startDate
-      ? {
-          createdAt: {
-            $gte: new Date(body.startDate),
-            $lte: new Date(body.endDate),
-          },
-        }
-      : null),
-  };
-
-  const todaysJobs = await OneWashModel.count(findWashQuery);
-  const todaysPayments = await PaymentsModel.aggregate([
-    { $match: { ...findWashQuery, status: "completed" } },
-    { $group: { _id: "$payment_mode", amount: { $sum: "$amount_paid" } } },
-  ]);
-
-  const todaysAmount = todaysPayments.length
-    ? todaysPayments.reduce((p, c) => p + c.amount, 0)
-    : 0;
-  const todaysCash = todaysPayments.length
-    ? todaysPayments.filter((e) => e._id == "cash")
-    : 0;
-  const todaysCard = todaysPayments.length
-    ? todaysPayments.filter((e) => e._id == "card")
-    : 0;
-  const todaysBank = todaysPayments.length
-    ? todaysPayments.filter((e) => e._id == "bank transfer")
-    : 0;
+  const totalCash = totalPayments.filter((e) => e._id == "cash");
+  const totalCard = totalPayments.filter((e) => e._id == "card");
+  const totalBank = totalPayments.filter((e) => e._id == "bank transfer");
 
   return {
     counts: {
@@ -854,6 +1258,11 @@ service.supervisors = async (userInfo, body) => {
       todaysCash: todaysCash.length ? todaysCash[0].amount : 0,
       todaysCard: todaysCard.length ? todaysCard[0].amount : 0,
       todaysBank: todaysBank.length ? todaysBank[0].amount : 0,
+    },
+    shiftDate,
+    shiftWindow: {
+      start: shiftStart.format("YYYY-MM-DD HH:mm"),
+      end: shiftEnd.format("YYYY-MM-DD HH:mm"),
     },
     charts: {},
   };

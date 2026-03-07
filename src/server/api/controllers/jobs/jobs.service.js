@@ -31,7 +31,13 @@ service.list = async (userInfo, rawQuery) => {
   const paginationData = CommonHelper.paginationData(query);
   const workers = [];
 
-  if (userInfo.role == "supervisor" && !query.worker) {
+  // If explicit worker IDs are sent (e.g. from supervisor frontend), use those directly
+  if (query.workers) {
+    const workerIds = Array.isArray(query.workers)
+      ? query.workers
+      : [query.workers];
+    workers.push(...workerIds);
+  } else if (userInfo.role == "supervisor" && !query.worker) {
     const workersFindQuery = {
       isDeleted: false,
       ...(userInfo.service_type == "mall"
@@ -72,7 +78,7 @@ service.list = async (userInfo, rawQuery) => {
 
     ...(isValidId(query.worker)
       ? { worker: query.worker }
-      : userInfo.role == "supervisor"
+      : workers.length > 0
         ? { worker: { $in: workers } }
         : null),
 

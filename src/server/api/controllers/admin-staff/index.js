@@ -11,6 +11,12 @@ const adminOnly = (req, res, next) => {
 };
 
 router.get("/", AuthHelper.authenticate, adminOnly, controller.list);
+router.get(
+  "/check-phone",
+  AuthHelper.authenticate,
+  adminOnly,
+  controller.checkPhoneNumber,
+);
 router.post("/", AuthHelper.authenticate, adminOnly, controller.create);
 router.get("/:id", AuthHelper.authenticate, adminOnly, controller.info);
 router.put("/:id", AuthHelper.authenticate, adminOnly, controller.update);

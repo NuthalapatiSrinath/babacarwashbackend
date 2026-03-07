@@ -41,15 +41,30 @@ service.calculateOrUpdateSlip = async (
   console.log("🔸 worker.service_type:", worker.service_type || "❌ NOT SET");
   console.log("🔸 worker.employeeCode:", worker.employeeCode || "N/A");
   console.log("\n--- SALARY SETTINGS LOADED FROM DB ---");
-  console.log("💰 carWash.dayDuty.ratePerCar:", settings.carWash.dayDuty.ratePerCar);
-  console.log("💰 carWash.nightDuty.ratePerCar:", settings.carWash.nightDuty.ratePerCar);
+  console.log(
+    "💰 carWash.dayDuty.ratePerCar:",
+    settings.carWash.dayDuty.ratePerCar,
+  );
+  console.log(
+    "💰 carWash.nightDuty.ratePerCar:",
+    settings.carWash.nightDuty.ratePerCar,
+  );
   console.log("💰 mall.oneWashRate:", settings.mall.oneWashRate);
+  console.log("💰 mall.insideWashRate:", settings.mall.insideWashRate);
+  console.log("💰 mall.outsideWashRate:", settings.mall.outsideWashRate);
+  console.log("💰 mall.totalWashRate:", settings.mall.totalWashRate);
   console.log("💰 mall.monthlyRate:", settings.mall.monthlyRate);
   console.log("💰 camp.helper.baseSalary:", settings.camp.helper.baseSalary);
-  console.log("💰 camp.helper.overtimeRate:", settings.camp.helper.overtimeRate);
+  console.log(
+    "💰 camp.helper.overtimeRate:",
+    settings.camp.helper.overtimeRate,
+  );
   console.log("💰 camp.mason.baseSalary:", settings.camp.mason.baseSalary);
   console.log("💰 camp.mason.overtimeRate:", settings.camp.mason.overtimeRate);
-  console.log("💰 etisalat.employeeBaseDeduction:", settings.etisalat.employeeBaseDeduction);
+  console.log(
+    "💰 etisalat.employeeBaseDeduction:",
+    settings.etisalat.employeeBaseDeduction,
+  );
   console.log("\n--- MANUAL INPUTS PROVIDED ---");
   console.log("✏️ Manual Inputs:", JSON.stringify(manualInputs, null, 2));
   console.log("═══════════════════════════════════════════════════════════\n");
@@ -60,13 +75,13 @@ service.calculateOrUpdateSlip = async (
   const daysInMonth = startDate.daysInMonth();
 
   // 2. Fetch Wash Data
-  // Onewash = Direct/One-time (Mall 3.00, Residential Day/Night)
+  // Onewash = Direct/One-time (Mall inside/outside/total, Residential Day/Night)
   const oneWashData = await OnewashModel.find({
     worker: workerId,
     isDeleted: false,
     createdAt: { $gte: startDate.toDate(), $lte: endDate.toDate() },
   })
-    .select("createdAt")
+    .select("createdAt wash_type")
     .lean();
 
   // Jobs = Subscriptions (Mall 1.35, Residential Day/Night)
@@ -156,8 +171,34 @@ service.calculateOrUpdateSlip = async (
 
   // === LOGIC B: MALL EMPLOYEES ===
   else if (workerType === "mall") {
-    // 3.00 for One Wash, 1.35 for Monthly
-    const payOneWash = oneWashCount * settings.mall.oneWashRate;
+    // Break down one-wash counts by wash_type
+    let insideWashCount = 0;
+    let outsideWashCount = 0;
+    let totalWashTypeCount = 0; // inside+outside
+    let unknownWashCount = 0;
+
+    oneWashData.forEach((wash) => {
+      const wt = wash.wash_type;
+      if (wt === "inside") insideWashCount++;
+      else if (wt === "outside") outsideWashCount++;
+      else if (wt === "total") totalWashTypeCount++;
+      else unknownWashCount++;
+    });
+
+    // Get rates - use specific rates if configured, else fallback to flat oneWashRate
+    const insideRate =
+      settings.mall.insideWashRate ?? settings.mall.oneWashRate;
+    const outsideRate =
+      settings.mall.outsideWashRate ?? settings.mall.oneWashRate;
+    const totalRate = settings.mall.totalWashRate ?? settings.mall.oneWashRate;
+    const fallbackRate = settings.mall.oneWashRate;
+
+    const payInside = insideWashCount * insideRate;
+    const payOutside = outsideWashCount * outsideRate;
+    const payTotal = totalWashTypeCount * totalRate;
+    const payUnknown = unknownWashCount * fallbackRate;
+
+    const payOneWash = payInside + payOutside + payTotal + payUnknown;
     const payMonthly = subscriptionCount * settings.mall.monthlyRate;
     earnings.basic = payOneWash + payMonthly;
 
@@ -172,14 +213,41 @@ service.calculateOrUpdateSlip = async (
     earnings.allowance = dailyAllowance * daysWorked;
 
     breakdown.method = "Mall Structure";
+    breakdown.insideWashCount = insideWashCount;
+    breakdown.outsideWashCount = outsideWashCount;
+    breakdown.totalWashTypeCount = totalWashTypeCount;
+    breakdown.unknownWashCount = unknownWashCount;
+    breakdown.insideRate = insideRate;
+    breakdown.outsideRate = outsideRate;
+    breakdown.totalRate = totalRate;
     breakdown.oneWashPay = payOneWash;
     breakdown.monthlyPay = payMonthly;
     breakdown.allowance = earnings.allowance.toFixed(2);
 
     console.log("\n✅ USING: MALL LOGIC");
     console.log("📊 Method:", breakdown.method);
-    console.log("🚗 OneWash Count:", oneWashCount, "@ Rate:", settings.mall.oneWashRate);
-    console.log("📅 Subscription Count:", subscriptionCount, "@ Rate:", settings.mall.monthlyRate);
+    console.log("🚗 Inside Washes:", insideWashCount, "@ Rate:", insideRate);
+    console.log("🚗 Outside Washes:", outsideWashCount, "@ Rate:", outsideRate);
+    console.log(
+      "🚗 Total (In+Out) Washes:",
+      totalWashTypeCount,
+      "@ Rate:",
+      totalRate,
+    );
+    if (unknownWashCount > 0)
+      console.log(
+        "🚗 Unknown Type Washes:",
+        unknownWashCount,
+        "@ Rate:",
+        fallbackRate,
+      );
+    console.log("💵 OneWash Total Pay:", payOneWash.toFixed(2));
+    console.log(
+      "📅 Subscription Count:",
+      subscriptionCount,
+      "@ Rate:",
+      settings.mall.monthlyRate,
+    );
     console.log("💰 Basic Earnings:", earnings.basic.toFixed(2));
     console.log("🎁 Allowance:", earnings.allowance.toFixed(2));
   }
@@ -323,6 +391,10 @@ service.calculateOrUpdateSlip = async (
     totalDirectWashes: oneWashCount,
     totalSubscriptionWashes: subscriptionCount,
     totalWashes: totalWashes,
+    // Mall wash type breakdown
+    insideWashCount: breakdown.insideWashCount || 0,
+    outsideWashCount: breakdown.outsideWashCount || 0,
+    totalWashTypeCount: breakdown.totalWashTypeCount || 0,
 
     // Earnings
     basicSalary: Number(earnings.basic.toFixed(2)),

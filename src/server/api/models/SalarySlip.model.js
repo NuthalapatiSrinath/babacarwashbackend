@@ -13,9 +13,13 @@ const SalarySlipSchema = new Schema(
     role: { type: String, default: "carwash" }, // carwash, mall, camp
 
     // --- Counts & Attendance ---
-    totalDirectWashes: { type: Number, default: 0 }, // Mall: 3.00, Residential: Total
+    totalDirectWashes: { type: Number, default: 0 }, // Mall: total direct, Residential: Total
     totalSubscriptionWashes: { type: Number, default: 0 }, // Mall: 1.35
     totalWashes: { type: Number, default: 0 },
+    // Mall wash type breakdown
+    insideWashCount: { type: Number, default: 0 },
+    outsideWashCount: { type: Number, default: 0 },
+    totalWashTypeCount: { type: Number, default: 0 }, // inside+outside
 
     presentDays: { type: Number, default: 0 },
     absentDays: { type: Number, default: 0 },

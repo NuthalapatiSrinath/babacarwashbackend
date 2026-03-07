@@ -116,9 +116,15 @@ service.update = async (userInfo, id, payload) => {
 
 service.delete = async (userInfo, id, payload) => {
   const supervisor = await UsersModel.findOne({ _id: id });
+
+  // Modify phone number to free it up for reuse (avoid unique index conflict)
+  const deletedNumber = supervisor.number
+    ? `deleted_${supervisor.number}_${Date.now()}`
+    : supervisor.number;
+
   const result = await UsersModel.updateOne(
     { _id: id },
-    { isDeleted: true, deletedBy: userInfo._id },
+    { isDeleted: true, deletedBy: userInfo._id, number: deletedNumber },
   );
 
   // Send notification about supervisor deletion

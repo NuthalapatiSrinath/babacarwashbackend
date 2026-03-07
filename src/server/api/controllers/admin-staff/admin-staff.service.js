@@ -47,10 +47,9 @@ service.info = async (id) => {
 
 // Create a new admin staff user
 service.create = async (payload) => {
-  // Check if phone number already exists
+  // Check if phone number already exists (check all users due to unique index on number)
   const exists = await UsersModel.countDocuments({
     number: payload.number,
-    isDeleted: { $ne: true },
   });
   if (exists) throw "ALREADY_EXISTS";
 
@@ -93,10 +92,18 @@ service.create = async (payload) => {
     isBlocked: false,
   };
 
-  const created = await new UsersModel(staffData).save();
-  const result = created.toObject();
-  delete result.hPassword;
-  return result;
+  try {
+    const created = await new UsersModel(staffData).save();
+    const result = created.toObject();
+    delete result.hPassword;
+    return result;
+  } catch (error) {
+    // If MongoDB throws duplicate key error, convert to our error format
+    if (error.code === 11000) {
+      throw "ALREADY_EXISTS";
+    }
+    throw error;
+  }
 };
 
 // Update admin staff user
@@ -112,11 +119,10 @@ service.update = async (id, payload) => {
   const updateData = {};
   if (payload.name) updateData.name = payload.name;
   if (payload.number) {
-    // Check if new number is already taken by another user
+    // Check if new number is already taken by another user (including deleted users due to unique index)
     const exists = await UsersModel.countDocuments({
       number: payload.number,
       _id: { $ne: id },
-      isDeleted: { $ne: true },
     });
     if (exists) throw "ALREADY_EXISTS";
     updateData.number = payload.number;
@@ -130,9 +136,21 @@ service.update = async (id, payload) => {
     updateData.isBlocked = payload.isBlocked;
   }
 
-  return UsersModel.findByIdAndUpdate(id, { $set: updateData }, { new: true })
-    .select("-hPassword +password")
-    .lean();
+  try {
+    return await UsersModel.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      { new: true },
+    )
+      .select("-hPassword +password")
+      .lean();
+  } catch (error) {
+    // If MongoDB throws duplicate key error, convert to our error format
+    if (error.code === 11000) {
+      throw "ALREADY_EXISTS";
+    }
+    throw error;
+  }
 };
 
 // Update permissions for admin staff
@@ -183,11 +201,22 @@ service.delete = async (id) => {
 
   if (!staff) throw "NOT_FOUND";
 
+  // Modify phone number to free it up for reuse (avoid unique index conflict)
+  const deletedNumber = `deleted_${staff.number}_${Date.now()}`;
+
   return UsersModel.findByIdAndUpdate(
     id,
-    { $set: { isDeleted: true } },
+    { $set: { isDeleted: true, number: deletedNumber } },
     { new: true },
   )
     .select("-hPassword -password")
     .lean();
+};
+
+// Check who has a phone number (for debugging duplicates)
+service.checkPhoneNumber = async (phoneNumber) => {
+  const users = await UsersModel.find({ number: phoneNumber })
+    .select("name number role isDeleted createdAt")
+    .lean();
+  return users;
 };

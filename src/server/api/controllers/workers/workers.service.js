@@ -228,9 +228,14 @@ service.delete = async (userInfo, id, payload) => {
   // Get worker details before deletion
   const worker = await WorkersModel.findOne({ _id: id });
 
+  // Modify phone number to free it up for reuse (avoid unique index conflict)
+  const deletedNumber = worker.number
+    ? `deleted_${worker.number}_${Date.now()}`
+    : worker.number;
+
   const result = await WorkersModel.updateOne(
     { _id: id },
-    { isDeleted: true, deletedBy: userInfo._id },
+    { isDeleted: true, deletedBy: userInfo._id, number: deletedNumber },
   );
 
   // Send notification about worker deletion
@@ -781,32 +786,44 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
 service.monthlyRecords = async (userInfo, query) => {
   const year = parseInt(query.year);
   const month = parseInt(query.month); // 0 = Jan
-  const targetWorkerId = query.workerId; // ✅ NEW: Filter by specific worker
+  const targetWorkerId = query.workerId;
 
   if (isNaN(year) || isNaN(month)) {
     throw new Error("Invalid Year or Month");
   }
 
-  // Date Range
-  const startDate = moment(new Date(year, month, 1)).startOf("month");
-  const endDate = moment(new Date(year, month, 1)).endOf("month");
-  const daysInMonth = startDate.daysInMonth();
+  // Shift window: 18:30 Dubai (14:30 UTC) to next day 18:30 Dubai (14:30 UTC)
+  // Day 1 shift = prev month last day 14:30 UTC → day 1 14:30 UTC
+  // Day N shift = (N-1) 14:30 UTC → N 14:30 UTC
+  const daysInMonth = moment(new Date(year, month, 1)).daysInMonth();
 
-  // 1. Build Queries
+  // Shift start for day 1: previous month last day at 14:30 UTC
+  const monthShiftStart = moment
+    .utc(new Date(year, month, 1))
+    .subtract(1, "day")
+    .set({ hour: 14, minute: 30, second: 0, millisecond: 0 });
+  // Shift end for last day: last day of month at 14:30 UTC
+  const monthShiftEnd = moment
+    .utc(new Date(year, month, daysInMonth))
+    .set({ hour: 14, minute: 30, second: 0, millisecond: 0 });
+
+  // 1. Build Queries — use completedDate/createdAt within the full month shift range
   const onewashQuery = {
     isDeleted: false,
-    createdAt: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+    createdAt: { $gte: monthShiftStart.toDate(), $lte: monthShiftEnd.toDate() },
     worker: { $exists: true, $ne: null },
   };
 
   const jobsQuery = {
     isDeleted: false,
     status: "completed",
-    assignedDate: { $gte: startDate.toDate(), $lte: endDate.toDate() },
+    completedDate: {
+      $gte: monthShiftStart.toDate(),
+      $lte: monthShiftEnd.toDate(),
+    },
     worker: { $exists: true, $ne: null },
   };
 
-  // ✅ Apply Single Worker Filter
   if (targetWorkerId) {
     onewashQuery.worker = targetWorkerId;
     jobsQuery.worker = targetWorkerId;
@@ -831,7 +848,21 @@ service.monthlyRecords = async (userInfo, query) => {
       .lean(),
   ]);
 
-  // 3. Aggregate
+  // 3. Aggregate — assign each record to the correct shift day
+  // Shift day N: (N-1) 14:30 UTC → N 14:30 UTC
+  const getShiftDay = (dateVal) => {
+    const m = moment.utc(dateVal);
+    const dayOfMonth = m.date();
+    const hour = m.hour();
+    const minute = m.minute();
+    // If before 14:30 UTC (18:30 Dubai), belongs to current calendar day's shift
+    // If at/after 14:30 UTC, belongs to next calendar day's shift
+    if (hour > 14 || (hour === 14 && minute >= 30)) {
+      return dayOfMonth + 1;
+    }
+    return dayOfMonth;
+  };
+
   const workerMap = {};
 
   const processJob = (job, dateField) => {
@@ -841,7 +872,9 @@ service.monthlyRecords = async (userInfo, query) => {
     const dateVal = job[dateField];
     if (!dateVal) return;
 
-    const day = moment(dateVal).date(); // 1-31
+    const day = getShiftDay(dateVal);
+    // Skip if falls outside this month (edge cases at month boundaries)
+    if (day < 1 || day > daysInMonth) return;
 
     if (!workerMap[wId]) {
       workerMap[wId] = {
@@ -856,11 +889,9 @@ service.monthlyRecords = async (userInfo, query) => {
       };
     }
 
-    // Counts
     workerMap[wId].days[day] = (workerMap[wId].days[day] || 0) + 1;
     workerMap[wId].totalCars++;
 
-    // Tips
     if (job.tip_amount) {
       const tip = Number(job.tip_amount);
       if (!isNaN(tip)) workerMap[wId].totalTip += tip;
@@ -877,7 +908,7 @@ service.monthlyRecords = async (userInfo, query) => {
       dayData[`day_${d}`] = w.days[d] || 0;
     }
     return {
-      ...w, // includes id, name, mobile, serviceType
+      ...w,
       ...dayData,
       total: w.totalCars,
       tips: w.totalTip,

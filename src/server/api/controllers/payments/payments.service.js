@@ -69,14 +69,41 @@ service.list = async (userInfo, query) => {
       }
     }
 
+    // --- Supervisor team filtering ---
+    const isValidId = (id) =>
+      id && typeof id === "string" && id.match(/^[0-9a-fA-F]{24}$/);
+    let supervisorWorkerFilter = null;
+
+    if (userInfo.role === "supervisor" && userInfo.service_type) {
+      const findWorkerQuery = { isDeleted: false };
+      if (userInfo.service_type === "mall" && isValidId(userInfo.mall)) {
+        findWorkerQuery.malls = { $in: [userInfo.mall] };
+      } else if (
+        userInfo.service_type === "residence" &&
+        Array.isArray(userInfo.buildings)
+      ) {
+        const validBuildings = userInfo.buildings.filter(isValidId);
+        if (validBuildings.length > 0) {
+          findWorkerQuery.buildings = { $in: validBuildings };
+        }
+      }
+      const teamWorkers = await WorkersModel.find(findWorkerQuery)
+        .select("_id")
+        .lean();
+      supervisorWorkerFilter = teamWorkers.map((w) => w._id);
+    }
+
     const findQuery = {
       isDeleted: false,
       ...dateFilter,
       onewash: query.onewash == "true",
       ...(query.status ? { status: query.status } : null),
+      // Worker filter: specific worker > supervisor team > no constraint
       ...(query.worker && query.worker.trim() !== ""
         ? { worker: query.worker }
-        : null),
+        : supervisorWorkerFilter
+          ? { worker: { $in: supervisorWorkerFilter } }
+          : null),
       ...(query.building && query.building.trim() !== ""
         ? { building: query.building }
         : null),

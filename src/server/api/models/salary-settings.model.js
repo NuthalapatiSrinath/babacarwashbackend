@@ -34,7 +34,10 @@ const SalarySettingsSchema = new Schema(
 
     // 3. Mall Employees
     mall: {
-      oneWashRate: { type: Number, default: 3.0 }, // Direct car wash
+      oneWashRate: { type: Number, default: 3.0 }, // Legacy flat rate (fallback)
+      insideWashRate: { type: Number, default: 3.0 }, // Inside wash rate
+      outsideWashRate: { type: Number, default: 3.0 }, // Outside wash rate
+      totalWashRate: { type: Number, default: 6.0 }, // Inside+Outside (total) wash rate
       monthlyRate: { type: Number, default: 1.35 }, // Subscription vehicles
       fixedAllowance: { type: Number, default: 200 }, // Pro-rated
       absentDeduction: { type: Number, default: 25 },

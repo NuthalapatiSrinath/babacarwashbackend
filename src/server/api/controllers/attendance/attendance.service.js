@@ -27,38 +27,46 @@ service.list = async (userInfo, query) => {
     ...(query.search
       ? { $or: [{ name: { $regex: query.search, $options: "i" } }] }
       : null),
-    ...(query.worker
-      ? { $or: [{ worker: query.worker }, { staff: query.worker }] }
-      : null),
+    ...(query.workers
+      ? {
+          worker: {
+            $in: Array.isArray(query.workers) ? query.workers : [query.workers],
+          },
+        }
+      : query.worker
+        ? { $or: [{ worker: query.worker }, { staff: query.worker }] }
+        : null),
   };
 
-  if (query.premise == "site") {
-    const staffQuery = {
-      isDeleted: false,
-      ...(query.site ? { site: query.site } : null),
-    };
-    const staffData = await StaffModel.find(staffQuery, { _id: 1 }).lean();
-    findQuery.staff = { $in: staffData.map((e) => e._id) };
-  }
+  if (!query.workers) {
+    if (query.premise == "site") {
+      const staffQuery = {
+        isDeleted: false,
+        ...(query.site ? { site: query.site } : null),
+      };
+      const staffData = await StaffModel.find(staffQuery, { _id: 1 }).lean();
+      findQuery.staff = { $in: staffData.map((e) => e._id) };
+    }
 
-  if (["mall", "residence"].includes(query.premise)) {
-    const workerQuery = {
-      isDeleted: false,
-      service_type: query.premise,
-      ...(query.mall ? { malls: { $in: query.mall } } : null),
-      ...(query.building
-        ? {
-            buildings: {
-              $in: (Array.isArray(query.building)
-                ? query.building
-                : [query.building]
-              ).filter((b) => b && b.trim()),
-            },
-          }
-        : null),
-    };
-    const staffData = await WorkersModel.find(workerQuery, { _id: 1 }).lean();
-    findQuery.worker = { $in: staffData.map((e) => e._id) };
+    if (["mall", "residence"].includes(query.premise)) {
+      const workerQuery = {
+        isDeleted: false,
+        service_type: query.premise,
+        ...(query.mall ? { malls: { $in: query.mall } } : null),
+        ...(query.building
+          ? {
+              buildings: {
+                $in: (Array.isArray(query.building)
+                  ? query.building
+                  : [query.building]
+                ).filter((b) => b && (typeof b === "string" ? b.trim() : true)),
+              },
+            }
+          : null),
+      };
+      const staffData = await WorkersModel.find(workerQuery, { _id: 1 }).lean();
+      findQuery.worker = { $in: staffData.map((e) => e._id) };
+    }
   }
 
   const data = await AttendanceModel.find(findQuery)
@@ -132,7 +140,7 @@ service.exportData = async (userInfo, query) => {
               $in: (Array.isArray(query.building)
                 ? query.building
                 : [query.building]
-              ).filter((b) => b && b.trim()),
+              ).filter((b) => b && (typeof b === "string" ? b.trim() : true)),
             },
           }
         : null),
