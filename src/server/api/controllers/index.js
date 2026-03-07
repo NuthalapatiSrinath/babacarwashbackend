@@ -21,6 +21,7 @@ router.use("/sites", require("./sites"));
 router.use("/configurations", require("./configurations"));
 router.use("/admin/staff", require("./staff"));
 router.use("/admin-staff", require("./admin-staff"));
+router.use("/admin-messages", require("./admin-messages"));
 router.use("/access-requests", require("./access-requests"));
 
 // ✅ FIXED: Added require()

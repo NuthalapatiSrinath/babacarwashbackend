@@ -56,13 +56,40 @@ service.create = async (payload) => {
 
   const passwordHash = AuthHelper.getPasswordHash(payload.password);
 
+  // Default to full access permissions for new staff
+  const fullAccessPermissions = {
+    dashboard: { view: true },
+    customers: { view: true, create: true, edit: true, delete: true },
+    workers: { view: true, create: true, edit: true, delete: true },
+    staff: { view: true, create: true, edit: true, delete: true },
+    attendance: { view: true, create: true, edit: true, delete: true },
+    supervisors: { view: true, create: true, edit: true, delete: true },
+    washes: { view: true, create: true, edit: true, delete: true },
+    payments: { view: true, create: true, edit: true, delete: true },
+    workRecords: { view: true },
+    collectionSheet: { view: true },
+    settlements: { view: true, create: true, edit: true, delete: true },
+    pendingPayments: { view: true },
+    yearlyRecords: { view: true },
+    pricing: { view: true, edit: true },
+    locations: { view: true, create: true, edit: true, delete: true },
+    buildings: { view: true, create: true, edit: true, delete: true },
+    malls: { view: true, create: true, edit: true, delete: true },
+    sites: { view: true, create: true, edit: true, delete: true },
+    vehicles: { view: true, create: true, edit: true, delete: true },
+    enquiry: { view: true, edit: true, delete: true },
+    bookings: { view: true, edit: true, delete: true },
+    importLogs: { view: true },
+    settings: { view: true, edit: true },
+  };
+
   const staffData = {
     name: payload.name,
     number: payload.number,
     password: passwordHash,
     hPassword: passwordHash,
     role: "manager",
-    permissions: payload.permissions || {},
+    permissions: payload.permissions || fullAccessPermissions,
     isBlocked: false,
   };
 
