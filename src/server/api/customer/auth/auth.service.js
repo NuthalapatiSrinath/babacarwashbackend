@@ -5,6 +5,11 @@ const BuildingsModel = require("../../models/buildings.model");
 const AuthHelper = require("./auth.helper");
 const service = module.exports;
 
+const isValidObjectId = (value) => {
+  if (!value || typeof value !== "string") return false;
+  return /^[a-fA-F0-9]{24}$/.test(value);
+};
+
 service.signup = async (payload) => {
   const isExists = await CustomersModel.countDocuments({
     mobile: payload.mobile,
@@ -59,27 +64,45 @@ service.me = async (payload) => {
     { _id: payload._id },
     { password: 0, hPassword: 0 },
   ).lean();
+
+  if (!user) {
+    throw "UNAUTHORIZED";
+  }
+
+  const customerCandidates = [user._id, String(user._id), user._id?.toString?.()].filter(
+    Boolean,
+  );
+
   const bookings = await JobsModel.countDocuments({
     isDeleted: false,
-    customer: user._id,
+    customer: { $in: [...new Set(customerCandidates)] },
   });
 
   // Populate location address
   let locationData = null;
   if (user.location) {
-    locationData = await LocationsModel.findOne(
-      { _id: user.location, isDeleted: false },
-      { address: 1 },
-    ).lean();
+    if (isValidObjectId(user.location)) {
+      locationData = await LocationsModel.findOne(
+        { _id: user.location, isDeleted: false },
+        { address: 1 },
+      ).lean();
+    } else {
+      // Mobile flow may store a plain-text current location string.
+      locationData = { address: user.location };
+    }
   }
 
   // Populate building name
   let buildingData = null;
   if (user.building) {
-    buildingData = await BuildingsModel.findOne(
-      { _id: user.building, isDeleted: false },
-      { name: 1, location_id: 1 },
-    ).lean();
+    if (isValidObjectId(user.building)) {
+      buildingData = await BuildingsModel.findOne(
+        { _id: user.building, isDeleted: false },
+        { name: 1, location_id: 1 },
+      ).lean();
+    } else {
+      buildingData = { name: user.building };
+    }
   }
 
   return {
@@ -102,7 +125,12 @@ service.updateProfile = async (payload, body) => {
   const updateData = {};
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
-      updateData[field] = body[field];
+      if ((field === "location" || field === "building") && body[field]) {
+        const value = String(body[field]).trim();
+        updateData[field] = value;
+      } else {
+        updateData[field] = body[field];
+      }
     }
   }
   if (Object.keys(updateData).length === 0) {

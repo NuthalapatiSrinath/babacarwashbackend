@@ -6,7 +6,47 @@ const PaymentsModel = require("../../models/payments.model");
 const UsersModel = require("../../models/users.model");
 const CounterService = require("../../../utils/counters");
 const AuthHelper = require("../auth/auth.helper");
+const mongoose = require("mongoose");
 const service = module.exports;
+
+const isValidObjectId = (value) =>
+  typeof value === "string" && mongoose.Types.ObjectId.isValid(value);
+
+const getMobileAddressText = (job) => {
+  if (typeof job?.address === "string" && job.address.trim()) {
+    return job.address.trim();
+  }
+
+  if (
+    job?.location &&
+    typeof job.location === "string" &&
+    job.location.trim()
+  ) {
+    return job.location.trim();
+  }
+
+  const map = job?.locationMap;
+  if (!map) return "Current Location";
+  if (typeof map === "string" && map.trim()) return map.trim();
+
+  if (typeof map === "object") {
+    const parts = [
+      map.address,
+      map.formatted_address,
+      map.place_name,
+      map.name,
+      map.locality,
+      map.city,
+      map.state,
+      map.country,
+    ]
+      .filter((x) => typeof x === "string" && x.trim())
+      .map((x) => x.trim());
+    if (parts.length) return [...new Set(parts)].join(", ");
+  }
+
+  return "Current Location";
+};
 
 service.list = async (userInfo, query) => {
   // Residence workers use 18:30-to-18:30 shift windows.
@@ -165,17 +205,47 @@ service.list = async (userInfo, query) => {
     JSON.stringify(rejectedQuery, null, 2),
   );
 
-  // Counts: Pending/Completed use current shift, Rejected uses 7-day range
+  const isValidCustomerBookingJob = async (queryObj) => {
+    const jobs = await JobsModel.find(queryObj)
+      .select("booking createdBy")
+      .lean();
+    if (!jobs.length) return 0;
+
+    const bookingIds = jobs
+      .filter((j) => j.createdBy === "Customer Booking" && j.booking)
+      .map((j) => String(j.booking));
+
+    const existingBookingSet = new Set();
+    if (bookingIds.length) {
+      const existing = await BookingsModel.find({
+        _id: { $in: [...new Set(bookingIds)] },
+      })
+        .select("_id")
+        .lean();
+      for (const b of existing) {
+        existingBookingSet.add(String(b._id));
+      }
+    }
+
+    return jobs.filter((j) => {
+      if (j.createdBy !== "Customer Booking") return true;
+      if (!j.booking) return false;
+      return existingBookingSet.has(String(j.booking));
+    }).length;
+  };
+
+  // Counts: Pending/Completed use current shift, Rejected uses 7-day range.
+  // For customer-created jobs, exclude orphan records whose booking no longer exists.
   const counts = {
-    pending: await JobsModel.countDocuments({
+    pending: await isValidCustomerBookingJob({
       ...currentShiftQuery,
       status: "pending",
     }),
-    completed: await JobsModel.countDocuments({
+    completed: await isValidCustomerBookingJob({
       ...currentShiftQuery,
       status: "completed",
     }),
-    rejected: await JobsModel.countDocuments({
+    rejected: await isValidCustomerBookingJob({
       ...rejectedQuery,
       status: "rejected",
     }),
@@ -190,15 +260,96 @@ service.list = async (userInfo, query) => {
     counts.rejected,
   );
 
-  const total = await JobsModel.countDocuments(findQuery);
-  const data = await JobsModel.find(findQuery)
+  let data = await JobsModel.find(findQuery)
     .sort({ _id: -1 })
-    .populate([
-      { path: "customer", model: "customers" },
-      { path: "location", model: "locations" },
-      { path: "building", model: "buildings" },
-    ])
+    .populate([{ path: "customer", model: "customers" }])
     .lean();
+
+  const locationIds = new Set();
+  const buildingIds = new Set();
+
+  for (const item of data) {
+    if (isValidObjectId(item.location)) locationIds.add(item.location);
+    if (isValidObjectId(item.building)) buildingIds.add(item.building);
+  }
+
+  const [locations, buildingDocs] = await Promise.all([
+    locationIds.size
+      ? mongoose
+          .model("locations")
+          .find(
+            { _id: { $in: [...locationIds] }, isDeleted: false },
+            { address: 1 },
+          )
+          .lean()
+      : Promise.resolve([]),
+    buildingIds.size
+      ? mongoose
+          .model("buildings")
+          .find(
+            { _id: { $in: [...buildingIds] }, isDeleted: false },
+            { name: 1 },
+          )
+          .lean()
+      : Promise.resolve([]),
+  ]);
+
+  const locationMap = new Map(locations.map((l) => [String(l._id), l]));
+  const buildingMap = new Map(buildingDocs.map((b) => [String(b._id), b]));
+
+  for (const item of data) {
+    if (isValidObjectId(item.location)) {
+      item.location = locationMap.get(String(item.location)) || null;
+    } else if (item.service_type === "mobile") {
+      item.location = {
+        _id: `mobile-location-${item._id}`,
+        address: getMobileAddressText(item),
+      };
+    } else {
+      item.location =
+        item.location && typeof item.location === "object"
+          ? item.location
+          : null;
+    }
+
+    if (isValidObjectId(item.building)) {
+      item.building = buildingMap.get(String(item.building)) || null;
+    } else if (item.service_type === "mobile") {
+      item.building = {
+        _id: `mobile-building-${item._id}`,
+        name: "Mobile Wash",
+      };
+    } else {
+      item.building =
+        item.building && typeof item.building === "object"
+          ? item.building
+          : null;
+    }
+  }
+
+  const customerBookingIds = data
+    .filter((j) => j.createdBy === "Customer Booking" && j.booking)
+    .map((j) => String(j.booking));
+
+  const existingBookingSet = new Set();
+  if (customerBookingIds.length) {
+    const existingBookings = await BookingsModel.find({
+      _id: { $in: [...new Set(customerBookingIds)] },
+    })
+      .select("_id")
+      .lean();
+    for (const b of existingBookings) {
+      existingBookingSet.add(String(b._id));
+    }
+  }
+
+  data = data.filter((job) => {
+    if (job.createdBy !== "Customer Booking") return true;
+    if (!job.booking) return false;
+    return existingBookingSet.has(String(job.booking));
+  });
+
+  const total = data.length;
 
   console.log("📋 Counts:", counts);
   console.log("📋 Total Jobs Found:", total);
@@ -220,7 +371,7 @@ service.list = async (userInfo, query) => {
     );
     let key = ["mobile", "mall"].includes(iterator.service_type)
       ? iterator.service_type.toUpperCase()
-      : `${iterator.location._id}-${iterator.building._id}`;
+      : `${iterator.location?._id || `loc-${iterator._id}`}-${iterator.building?._id || `bld-${iterator._id}`}`;
     if (jobsMap[key]) {
       jobsMap[key].jobs.push(iterator);
     } else {
@@ -305,6 +456,8 @@ service.jobCompleted = async (userInfo, id, payload) => {
     const bookingData = await BookingsModel.findOne({
       _id: jobData.booking,
     }).lean();
+    const assignedWorkerId =
+      jobData.worker || bookingData?.worker || userInfo._id;
     const usersData = JSON.parse(
       JSON.stringify(
         await CustomersModel.findOne({ _id: bookingData.customer }).lean(),
@@ -314,27 +467,48 @@ service.jobCompleted = async (userInfo, id, payload) => {
       (e) => e._id == bookingData.vehicle,
     );
     const paymentId = await CounterService.id("payments");
+    const totalAmount = Number(bookingData.amount || 0);
+    const amountPaid = 0;
+    const balance = Math.max(0, totalAmount - amountPaid);
+    const paymentStatus = balance <= 0 ? "completed" : "pending";
     const paymentData = {
       id: paymentId,
       job: id,
-      amount_charged: bookingData.amount,
-      total_amount: bookingData.amount,
-      amount_paid: 0,
+      amount_charged: totalAmount,
+      total_amount: totalAmount,
+      amount_paid: amountPaid,
+      balance,
       vehicle: {
         registration_no: vehicleData.registration_no,
         parking_no: vehicleData.parking_no,
       },
       customer: bookingData.customer,
-      worker: bookingData.worker,
+      worker: assignedWorkerId,
       service_type: bookingData.service_type,
       ...(bookingData.mall ? { mall: bookingData.mall } : null),
       ...(bookingData.building ? { building: bookingData.building } : null),
       createdBy: userInfo._id,
       updatedBy: userInfo._id,
-      onewash: true,
-      status: "pending",
+      onewash: false,
+      status: paymentStatus,
+      settled: paymentStatus === "completed" ? "completed" : "pending",
+      ...(paymentStatus === "completed"
+        ? { collectedDate: new Date(), settledDate: new Date() }
+        : null),
     };
     await new PaymentsModel(paymentData).save();
+
+    // Keep booking worker in sync with the actual completed job worker.
+    if (
+      !bookingData?.worker ||
+      String(bookingData.worker) !== String(assignedWorkerId)
+    ) {
+      await BookingsModel.updateOne(
+        { _id: jobData.booking },
+        { $set: { worker: assignedWorkerId } },
+      );
+    }
+
     await BookingsModel.updateOne({ _id: jobData.booking }, { $set: data });
   }
 };
@@ -356,6 +530,7 @@ service.createJob = async (
   customer,
   createdBy = "Cron Scheduler",
   createdSource = null,
+  bookingId = null,
 ) => {
   console.log(
     `🔧 [CREATE JOB] Starting for customer ${customer._id || customer.mobile}, createdBy: ${createdBy}`,
@@ -396,6 +571,7 @@ service.createJob = async (
           worker: vehicle.worker || null,
           location: customer.location || null,
           building: customer.building || null,
+          ...(bookingId ? { booking: bookingId } : null),
           createdBy,
           createdByName: createdBy,
           createdSource:
@@ -484,6 +660,7 @@ service.createJob = async (
           worker: vehicle.worker || null,
           location: customer.location || null,
           building: customer.building || null,
+          ...(bookingId ? { booking: bookingId } : null),
           createdBy,
           createdByName: createdBy,
           createdSource:
@@ -522,6 +699,19 @@ service.createJob = async (
               location: jobData.location,
               building: jobData.building,
               customer: jobData.customer,
+              ...(bookingId ? { booking: bookingId } : null),
+              ...(createdBy === "Customer Booking"
+                ? {
+                    createdBy,
+                    createdByName: createdBy,
+                    createdSource:
+                      createdSource ||
+                      (createdBy === "Customer Booking"
+                        ? "Customer App"
+                        : "Cron Job"),
+                    immediate: true,
+                  }
+                : null),
             },
           },
         );

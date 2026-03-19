@@ -1,9 +1,7 @@
 const router = require("express").Router();
-const controller = require("./payments.controller");
-const realtime = require("./payments.realtime");
+const controller = require("./jobs.controller");
 const AuthHelper = require("../auth/auth.helper");
 
 router.get("/", AuthHelper.authenticate, controller.list);
-router.get("/stream", AuthHelper.authenticate, realtime.subscribe);
 
 module.exports = router;

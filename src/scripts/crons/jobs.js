@@ -201,8 +201,20 @@ cron.run = async (targetDate = null) => {
 
         // Handle different formats of schedule_days
         if (Array.isArray(vehicle.schedule_days)) {
-          // Check if it's an array of objects with .value property
+          // Prefer day-name matching when available to avoid stale/misaligned numeric values.
           if (
+            vehicle.schedule_days[0] &&
+            typeof vehicle.schedule_days[0] === "object" &&
+            "day" in vehicle.schedule_days[0]
+          ) {
+            isMatchFound = vehicle.schedule_days.some((e) => {
+              const dayName = (e.day || "").toString().trim().toLowerCase();
+              return dayName === targetDayName.toLowerCase();
+            });
+          }
+          // Fallback to numeric value mapping.
+          if (
+            !isMatchFound &&
             vehicle.schedule_days[0] &&
             typeof vehicle.schedule_days[0] === "object" &&
             "value" in vehicle.schedule_days[0]

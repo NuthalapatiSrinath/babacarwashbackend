@@ -89,6 +89,11 @@ service.list = async (userInfo, rawQuery) => {
   };
 
   if (query.search) {
+    const numericSearch = Number(query.search);
+    if (Number.isFinite(numericSearch) && query.search.trim() !== "") {
+      findQuery.id = numericSearch;
+    }
+
     const customers = await CustomersModel.find({
       isDeleted: false,
       $or: [
@@ -106,7 +111,14 @@ service.list = async (userInfo, rawQuery) => {
           vehicles.push(vehicle._id);
         }
       }
-      findQuery.$or = [{ vehicle: { $in: vehicles } }];
+
+      // Combine id-search and vehicle-search instead of overwriting.
+      if (findQuery.id) {
+        delete findQuery.id;
+        findQuery.$or = [{ id: numericSearch }, { vehicle: { $in: vehicles } }];
+      } else {
+        findQuery.$or = [{ vehicle: { $in: vehicles } }];
+      }
     }
   }
 

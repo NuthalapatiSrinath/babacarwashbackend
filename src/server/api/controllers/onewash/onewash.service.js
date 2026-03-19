@@ -1,4 +1,5 @@
 const OneWashModel = require("../../models/onewash.model");
+const JobsModel = require("../../models/jobs.model");
 const PaymentsModel = require("../../models/payments.model");
 const WorkersModel = require("../../models/workers.model");
 const MallsModel = require("../../models/malls.model");
@@ -295,6 +296,116 @@ service.list = async (userInfo, query) => {
     insideOutsideAmount: aggResult.insideOutsideAmount || 0,
     residenceAmount: aggResult.residenceAmount || 0,
   };
+
+  // Fallback: customer-app accepted jobs are stored in regular jobs collection.
+  // If OneWash collection has no rows, surface those jobs in this endpoint.
+  if (total === 0) {
+    const fallbackQuery = {
+      isDeleted: false,
+      onewash: true,
+      createdBy: "Customer Booking",
+      service_type: { $in: ["mall", "mobile", "residence"] },
+      ...(findQuery.worker ? { worker: findQuery.worker } : null),
+      ...(query.status ? { status: query.status } : null),
+      ...(findQuery.createdAt
+        ? {
+            assignedDate: {
+              $gte: findQuery.createdAt.$gte,
+              $lte: findQuery.createdAt.$lte,
+            },
+          }
+        : null),
+      ...(query.service_type ? { service_type: query.service_type } : null),
+    };
+
+    if (query.search) {
+      const searchRegex = { $regex: query.search, $options: "i" };
+      const matchingWorkers = await WorkersModel.find(
+        { isDeleted: false, name: searchRegex },
+        { _id: 1 },
+      ).lean();
+
+      const orConditions = [
+        { parking_no: searchRegex },
+        { registration_no: searchRegex },
+      ];
+
+      if (matchingWorkers.length > 0) {
+        orConditions.push({
+          worker: { $in: matchingWorkers.map((e) => e._id) },
+        });
+      }
+      fallbackQuery.$or = orConditions;
+    }
+
+    let fallbackJobs = await JobsModel.find(fallbackQuery)
+      .sort({ assignedDate: -1, createdAt: -1 })
+      .populate({ path: "worker", model: "workers", select: "name" })
+      .populate({ path: "mall", model: "malls", select: "name" })
+      .populate({ path: "building", model: "buildings", select: "name" })
+      .lean();
+
+    fallbackJobs = fallbackJobs.map((job) => {
+      const amount = Number(job.amount || 0);
+      const tipAmount = Number(job.tip_amount || 0);
+      return {
+        ...job,
+        createdAt: job.assignedDate || job.createdAt,
+        amount,
+        tip_amount: tipAmount,
+        payment_mode: job.payment_mode || "",
+        wash_type: job.wash_type || "",
+        display_service_type:
+          job.service_type === "residence"
+            ? "Residence"
+            : job.service_type === "mobile"
+              ? "Mobile"
+              : "Mall",
+      };
+    });
+
+    const fallbackTotal = fallbackJobs.length;
+    const pagedFallback = fallbackJobs.slice(
+      paginationData.skip,
+      paginationData.skip + paginationData.limit,
+    );
+
+    const fallbackCounts = {
+      totalJobs: fallbackTotal,
+      totalAmount: fallbackJobs.reduce((sum, j) => sum + (j.amount || 0), 0),
+      cash: fallbackJobs
+        .filter((j) => (j.payment_mode || "").toLowerCase() === "cash")
+        .reduce((sum, j) => sum + (j.amount || 0), 0),
+      card: fallbackJobs
+        .filter((j) => (j.payment_mode || "").toLowerCase() === "card")
+        .reduce((sum, j) => sum + (j.amount || 0), 0),
+      bank: fallbackJobs
+        .filter((j) => (j.payment_mode || "").toLowerCase() === "bank transfer")
+        .reduce((sum, j) => sum + (j.amount || 0), 0),
+      tips: fallbackJobs.reduce((sum, j) => sum + (j.tip_amount || 0), 0),
+      outsideCount: fallbackJobs.filter((j) => j.wash_type === "outside")
+        .length,
+      insideOutsideCount: fallbackJobs.filter((j) => j.wash_type === "total")
+        .length,
+      residenceCount: fallbackJobs.filter((j) => j.service_type === "residence")
+        .length,
+      outsideAmount: fallbackJobs
+        .filter((j) => j.wash_type === "outside")
+        .reduce((sum, j) => sum + (j.amount || 0), 0),
+      insideOutsideAmount: fallbackJobs
+        .filter((j) => j.wash_type === "total")
+        .reduce((sum, j) => sum + (j.amount || 0), 0),
+      residenceAmount: fallbackJobs
+        .filter((j) => j.service_type === "residence")
+        .reduce((sum, j) => sum + (j.amount || 0), 0),
+    };
+
+    return {
+      total: fallbackTotal,
+      data: pagedFallback,
+      counts: fallbackCounts,
+    };
+  }
 
   return { total, data, counts };
 };

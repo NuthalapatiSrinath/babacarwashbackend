@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "migrate:auto-mobile:dry": "node src/scripts/migrate-auto-mobile-zero.js",
+    "migrate:auto-mobile:apply": "node src/scripts/migrate-auto-mobile-zero.js --apply",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "rakeshvn",

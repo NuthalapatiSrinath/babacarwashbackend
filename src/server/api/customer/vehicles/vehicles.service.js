@@ -18,8 +18,35 @@ service.info = async (userInfo, id) => {
 };
 
 service.create = async (userInfo, payload) => {
+  const registration_no = (payload.registration_no || "").toString().trim();
+  const parking_no = (payload.parking_no || "").toString().trim();
+
+  if (!registration_no) {
+    throw "Registration number is required";
+  }
+
+  if (!parking_no) {
+    throw "Parking number is required";
+  }
+
+  const customerData = await CustomersModel.findOne({
+    _id: userInfo._id,
+  }).lean();
+  const duplicate = (customerData?.vehicles || []).find(
+    (v) =>
+      (v.registration_no || "").toString().trim().toLowerCase() ===
+        registration_no.toLowerCase() &&
+      (v.parking_no || "").toString().trim().toLowerCase() ===
+        parking_no.toLowerCase(),
+  );
+
+  if (duplicate) {
+    throw "Vehicle with same registration and parking already exists";
+  }
+
   const vehicleData = {
-    registration_no: payload.registration_no,
+    registration_no,
+    parking_no,
     vehicle_type: payload.vehicle_type,
     brandId: payload.brandId,
     brandName: payload.brandName,
@@ -28,6 +55,8 @@ service.create = async (userInfo, payload) => {
     modelImage: payload.modelImage,
     category: payload.category,
     vehicleName: payload.vehicleName,
+    status: 1,
+    onboard_date: new Date(),
   };
   // Remove undefined fields
   Object.keys(vehicleData).forEach(
@@ -40,10 +69,28 @@ service.create = async (userInfo, payload) => {
 };
 
 service.update = async (userInfo, id, payload) => {
-  const updateFields = {
-    "vehicles.$.registration_no": payload.registration_no,
-    "vehicles.$.vehicle_type": payload.vehicle_type,
-  };
+  const updateFields = {};
+
+  if (payload.registration_no !== undefined) {
+    const registration_no = payload.registration_no.toString().trim();
+    if (!registration_no) {
+      throw "Registration number is required";
+    }
+    updateFields["vehicles.$.registration_no"] = registration_no;
+  }
+
+  if (payload.parking_no !== undefined) {
+    const parking_no = payload.parking_no.toString().trim();
+    if (!parking_no) {
+      throw "Parking number is required";
+    }
+    updateFields["vehicles.$.parking_no"] = parking_no;
+  }
+
+  if (payload.vehicle_type !== undefined) {
+    updateFields["vehicles.$.vehicle_type"] = payload.vehicle_type;
+  }
+
   if (payload.brandId) updateFields["vehicles.$.brandId"] = payload.brandId;
   if (payload.brandName)
     updateFields["vehicles.$.brandName"] = payload.brandName;
@@ -55,6 +102,10 @@ service.update = async (userInfo, id, payload) => {
   if (payload.category) updateFields["vehicles.$.category"] = payload.category;
   if (payload.vehicleName)
     updateFields["vehicles.$.vehicleName"] = payload.vehicleName;
+
+  if (!Object.keys(updateFields).length) {
+    throw "No valid fields to update";
+  }
 
   // Remove undefined fields
   Object.keys(updateFields).forEach(

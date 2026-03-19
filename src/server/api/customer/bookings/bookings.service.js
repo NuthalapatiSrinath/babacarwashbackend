@@ -7,13 +7,21 @@ const CommonHelper = require("../../../helpers/common.helper");
 const service = module.exports;
 
 service.list = async (userInfo, query) => {
+  const customerCandidates = [
+    userInfo._id,
+    String(userInfo._id),
+    userInfo._id?.toString?.(),
+  ].filter(Boolean);
+
+  const customerQuery = { customer: { $in: [...new Set(customerCandidates)] } };
+
   const paginationData = CommonHelper.paginationData(query);
   const total = await BookingsModel.countDocuments({
-    customer: userInfo._id,
+    ...customerQuery,
     isDeleted: false,
   });
   const data = await BookingsModel.find({
-    customer: userInfo._id,
+    ...customerQuery,
     isDeleted: false,
   })
     .sort({ _id: -1 })
@@ -38,6 +46,15 @@ service.create = async (userInfo, payload) => {
   let id = await CounterService.id("bookings");
   let customerData = await CustomersModel.findOne({ _id: userInfo._id }).lean();
   let vehicleData = customerData.vehicles.find((e) => e._id == payload.vehicle);
+
+  // Auto-note vehicle start date on first booking for better admin visibility.
+  if (vehicleData && !vehicleData.start_date) {
+    const startedAt = payload.start_date || payload.date || new Date();
+    await CustomersModel.updateOne(
+      { "vehicles._id": payload.vehicle },
+      { $set: { "vehicles.$.start_date": startedAt } },
+    );
+  }
 
   if (payload.service_type == "residence") {
     // Normalize schedule_days to proper case
@@ -115,15 +132,9 @@ service.update = async (userInfo, id, payload) => {
 };
 
 service.delete = async (userInfo, id, payload) => {
-  return await BookingsModel.updateOne(
-    { _id: id },
-    { isDeleted: true, deletedBy: userInfo._id },
-  );
+  return await BookingsModel.deleteOne({ _id: id, customer: userInfo._id });
 };
 
 service.undoDelete = async (userInfo, id) => {
-  return await BookingsModel.updateOne(
-    { _id: id },
-    { isDeleted: false, updatedBy: userInfo._id },
-  );
+  throw "Undo is not available because bookings are permanently deleted.";
 };

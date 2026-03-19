@@ -64,8 +64,29 @@ service.list = async (userInfo, query) => {
     ])
     .lean();
 
-  const onewashPayments = data.filter((e) => e.onewash);
-  const residencePayments = data.filter((e) => !e.onewash);
+  const onewashCandidateJobIds = data
+    .filter((e) => e.onewash && e.job)
+    .map((e) => String(e.job));
+
+  const validOnewashJobIdSet = new Set();
+  if (onewashCandidateJobIds.length) {
+    const onewashJobs = await OneWashModel.find(
+      { _id: { $in: [...new Set(onewashCandidateJobIds)] } },
+      { _id: 1 },
+    ).lean();
+
+    for (const job of onewashJobs) {
+      validOnewashJobIdSet.add(String(job._id));
+    }
+  }
+
+  // Only treat as one-wash if there is an actual OneWash job record.
+  const onewashPayments = data.filter(
+    (e) => e.onewash && e.job && validOnewashJobIdSet.has(String(e.job)),
+  );
+  const residencePayments = data.filter(
+    (e) => !(e.onewash && e.job && validOnewashJobIdSet.has(String(e.job))),
+  );
 
   // Add display_service_type to onewash payments
   const onewashPaymentsWithServiceType = await Promise.all(
@@ -81,6 +102,11 @@ service.list = async (userInfo, query) => {
       if (jobId) {
         // Try to find the onewash job by the job ID
         job = await OneWashModel.findOne({ _id: jobId }).lean();
+      }
+
+      if (!job && jobId) {
+        // Legacy safety: some non-onewash jobs were stored under onewash payments.
+        job = await JobsModel.findOne({ _id: jobId }).lean();
       }
 
       if (!job) {
@@ -356,39 +382,72 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
 service.collectPayment = async (userInfo, id, payload) => {
   const paymentData = await PaymentsModel.findOne({ _id: id }).lean();
 
-  if (paymentData.onewash) {
-    return this.collectOnewashPayment(userInfo, id, payload, paymentData);
+  if (!paymentData) {
+    throw "Payment not found";
   }
 
-  let status =
-    Number(payload.amount) <
-    paymentData.amount_charged - paymentData.amount_paid
-      ? "pending"
-      : "completed";
-  let balance =
-    paymentData.amount_charged +
-    paymentData.old_balance -
-    (paymentData.amount_paid + payload.amount);
+  const collectStandardPayment = async () => {
+    const collectedAmount = Number(payload.amount || 0);
+    const previousPaid = Number(paymentData.amount_paid || 0);
+    const totalAmount = Number(
+      paymentData.total_amount ||
+        Number(paymentData.amount_charged || 0) +
+          Number(paymentData.old_balance || 0),
+    );
+    const newAmountPaid = previousPaid + collectedAmount;
+    const balance = Math.max(0, totalAmount - newAmountPaid);
+    const status = newAmountPaid >= totalAmount ? "completed" : "pending";
 
-  await PaymentsModel.updateOne(
-    { _id: id },
-    {
-      $inc: { amount_paid: Number(paymentData.amount_paid + payload.amount) },
-      $set: {
-        payment_mode: payload.payment_mode,
-        balance,
-        status,
-        collectedDate: new Date(),
+    await PaymentsModel.updateOne(
+      { _id: id },
+      {
+        $set: {
+          amount_paid: newAmountPaid,
+          payment_mode: payload.payment_mode,
+          balance,
+          status,
+          collectedDate: new Date(),
+          ...(status === "completed"
+            ? { settled: "completed", settledDate: new Date() }
+            : null),
+        },
       },
-    },
-  );
+    );
 
-  await new TransactionsModel({
-    payment: id,
-    amount: Number(payload.amount),
-    createdBy: userInfo._id,
-    updatedBy: userInfo._id,
-  }).save();
+    await new TransactionsModel({
+      payment: id,
+      amount: collectedAmount,
+      createdBy: userInfo._id,
+      updatedBy: userInfo._id,
+    }).save();
+  };
+
+  if (paymentData.onewash) {
+    const [onewashJob, regularJob] = await Promise.all([
+      OneWashModel.findOne({ _id: paymentData.job }).select("_id").lean(),
+      JobsModel.findOne({ _id: paymentData.job })
+        .select("_id createdBy service_type")
+        .lean(),
+    ]);
+
+    if (onewashJob) {
+      return this.collectOnewashPayment(userInfo, id, payload, paymentData);
+    }
+
+    // Legacy safety: customer booking payments may have been incorrectly flagged as one-wash.
+    // If this points to a regular job, force standard collect path.
+    if (regularJob?._id) {
+      await PaymentsModel.updateOne({ _id: id }, { $set: { onewash: false } });
+    }
+
+    await collectStandardPayment();
+
+    // Ensure future operations don't enter one-wash flow again.
+    await PaymentsModel.updateOne({ _id: id }, { $set: { onewash: false } });
+    return;
+  }
+
+  await collectStandardPayment();
 };
 
 service.settlePayment = async (userInfo, payload) => {

@@ -1378,21 +1378,40 @@ const parseExcelDate = (value) => {
   );
 };
 
-// Generate auto mobile number (2000000xxx format)
-const generateAutoMobile = async () => {
-  const latestCustomer = await CustomersModel.findOne({
-    mobile: /^2000000\d{3}$/,
+const AUTO_MOBILE_UAE_PREFIX = "971200000";
+const LEGACY_AUTO_MOBILE_UAE_PREFIX = "9712000000";
+
+const getNextAutoMobileCounter = async () => {
+  const mobileRegex = /^9712000000?\d{3}$/;
+  const autoMobiles = await CustomersModel.find({
+    mobile: { $regex: mobileRegex },
   })
-    .sort({ mobile: -1 })
+    .select("mobile")
     .lean();
 
-  if (latestCustomer && latestCustomer.mobile) {
-    const lastNumber = parseInt(latestCustomer.mobile.substring(7));
-    const nextNumber = lastNumber + 1;
-    return `2000000${String(nextNumber).padStart(3, "0")}`;
+  let maxCounter = 0;
+  for (const row of autoMobiles) {
+    const value = String(row.mobile || "").trim();
+    let suffix = "";
+
+    if (value.startsWith(LEGACY_AUTO_MOBILE_UAE_PREFIX)) {
+      suffix = value.slice(LEGACY_AUTO_MOBILE_UAE_PREFIX.length);
+    } else if (value.startsWith(AUTO_MOBILE_UAE_PREFIX)) {
+      suffix = value.slice(AUTO_MOBILE_UAE_PREFIX.length);
+    }
+
+    if (/^\d+$/.test(suffix)) {
+      maxCounter = Math.max(maxCounter, parseInt(suffix, 10));
+    }
   }
 
-  return "2000000001"; // Start from 2000000001
+  return maxCounter + 1;
+};
+
+// Generate auto mobile number (UAE format: 971200000xxx)
+const generateAutoMobile = async () => {
+  const nextNumber = await getNextAutoMobileCounter();
+  return `${AUTO_MOBILE_UAE_PREFIX}${String(nextNumber).padStart(3, "0")}`;
 };
 
 // ---------------------------------------------------------
@@ -1480,17 +1499,7 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
   const customerGroups = new Map(); // Group vehicles by customer identifier
 
   // Get the starting auto-mobile number once at the beginning
-  const latestCustomer = await CustomersModel.findOne({
-    mobile: /^2000000\d{3}$/,
-  })
-    .sort({ mobile: -1 })
-    .lean();
-
-  let autoMobileCounter = 1;
-  if (latestCustomer && latestCustomer.mobile) {
-    const lastNumber = parseInt(latestCustomer.mobile.substring(7));
-    autoMobileCounter = lastNumber + 1;
-  }
+  let autoMobileCounter = await getNextAutoMobileCounter();
 
   // Step 1: Group rows by customer (by mobile only)
   for (const row of excelData) {
@@ -1513,7 +1522,7 @@ service.importDataFromExcel = async (userInfo, fileBuffer) => {
       // Each row without mobile becomes a separate customer
       let mobile = row.mobile;
       if (!mobile || mobile.trim() === "") {
-        mobile = `2000000${String(autoMobileCounter).padStart(3, "0")}`;
+        mobile = `${AUTO_MOBILE_UAE_PREFIX}${String(autoMobileCounter).padStart(3, "0")}`;
         autoMobileCounter++;
         console.log(
           `📱 Auto-generated mobile: ${mobile} for ${row.firstName || "Customer"} - Vehicle ${row.registration_no}`,
