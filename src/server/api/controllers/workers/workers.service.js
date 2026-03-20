@@ -16,6 +16,9 @@ const InAppNotifications = require("../../../notifications/in-app.notifications"
 // ... keep existing imports (WorkersModel, OnewashModel, JobsModel, etc.)
 const service = module.exports;
 
+const escapeRegex = (value = "") =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // ==========================================
 // 🟢 HELPERS
 // ==========================================
@@ -102,6 +105,13 @@ service.list = async (userInfo, query) => {
     ...(query.building ? { buildings: { $in: [query.building] } } : null),
     ...(query.site ? { sites: { $in: [query.site] } } : null),
     ...(query.service_type ? { service_type: query.service_type } : null),
+    ...(query.companyName
+      ? {
+          companyName: {
+            $regex: new RegExp(`^${escapeRegex(query.companyName)}$`, "i"),
+          },
+        }
+      : null),
   };
 
   if (Number(query.search)) {

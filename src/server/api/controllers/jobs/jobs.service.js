@@ -1164,7 +1164,7 @@ service.monthlyStatement = async (userInfo, query) => {
       const rowTotal = item.dailyCounts.reduce((a, b) => a + b, 0);
       rowData = [
         rowNumber,
-        item.name,
+        item.name || item.workerName || "Unassigned",
         ...item.dailyCounts.map((count) => (count > 0 ? count : "")),
         rowTotal,
         item.tips, // ✅ Added Tips

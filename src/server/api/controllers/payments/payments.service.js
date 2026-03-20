@@ -1176,7 +1176,7 @@ service.monthlyStatement = async (userInfo, query) => {
                 daysList = days.map((day) => day.trim()).join(",");
               }
 
-              return `Weekly (${dayCount}) - ${daysList}`;
+              return `Weekly ${dayCount} times`;
             })()
         : "-", // 7. Weekly Schedule
       advance: vehicle?.advance_amount || 0, // 8. Advance Payment Amount (show actual amount instead of Yes/No)
@@ -1921,7 +1921,7 @@ service.monthlyStatement = async (userInfo, query) => {
                 daysList = days.map((day) => day.trim()).join(",");
               }
 
-              return `Weekly (${dayCount}) - ${daysList}`;
+              return `Weekly ${dayCount} times`;
             })()
         : "-",
       advance: vehicle?.advance_amount || 0,
@@ -2052,13 +2052,40 @@ service.generatePDF = async (userInfo, filters) => {
 
   console.log(`📊 Fetched ${payments.length} total records for PDF`);
 
+  const toNumber = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const totals = payments.reduce(
+    (acc, payment) => {
+      const totalDue = toNumber(payment.total_amount);
+      const amountPaid = toNumber(payment.amount_paid);
+      acc.totalDue += totalDue;
+      acc.totalPaid += amountPaid;
+
+      const mode = String(payment.payment_mode || "")
+        .trim()
+        .toLowerCase();
+      if (!amountPaid) return acc;
+
+      if (mode === "cash") acc.cash += amountPaid;
+      else if (mode === "card") acc.card += amountPaid;
+      else if (mode === "bank" || mode === "bank transfer") {
+        acc.bank += amountPaid;
+      }
+
+      return acc;
+    },
+    { totalDue: 0, totalPaid: 0, cash: 0, card: 0, bank: 0 },
+  );
+
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
         layout: "landscape",
         size: "A4",
         margin: 40,
-        bufferPages: true,
       });
 
       const chunks = [];
@@ -2066,36 +2093,15 @@ service.generatePDF = async (userInfo, filters) => {
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      // Add logo
-      const logoPath = path.join(
+      const iconLogoPath = path.join(
         __dirname,
         "../../../../../admin-panel/public/logo-icon.png",
       );
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, 40, 30, { width: 50, height: 50 });
-      }
+      const textLogoPath = path.join(
+        __dirname,
+        "../../../../../admin-panel/public/logo-text.png",
+      );
 
-      // Title with gradient effect (blue)
-      doc
-        .fontSize(22)
-        .font("Helvetica-Bold")
-        .fillColor("#1e40af")
-        .text("Residence Payments Report", 110, 40, { align: "left" });
-
-      doc.moveDown(1.5);
-
-      // Decorative line
-      doc
-        .strokeColor("#3b82f6")
-        .lineWidth(2)
-        .moveTo(40, doc.y)
-        .lineTo(doc.page.width - 40, doc.y)
-        .stroke();
-
-      doc.moveDown(0.5);
-
-      // Date range and stats (NO BOX, just text)
-      doc.fontSize(10).font("Helvetica").fillColor("#374151");
       const startDate = filters.startDate
         ? moment(filters.startDate).format("DD/MM/YYYY")
         : "N/A";
@@ -2103,25 +2109,15 @@ service.generatePDF = async (userInfo, filters) => {
         ? moment(filters.endDate).format("DD/MM/YYYY")
         : "N/A";
 
-      doc.text(`Date Range: ${startDate} to ${endDate}`, 40, doc.y);
-      doc.text(`Total Records: ${payments.length}`, 40, doc.y + 15);
-      doc.text(
-        `Total Revenue: ${result.stats?.totalAmount || 0} AED`,
-        40,
-        doc.y + 30,
-      );
+      const formatMoney = (value) => `${toNumber(value).toFixed(2)} AED`;
 
-      doc.moveDown(4);
-
-      // Prepare table rows (removed customer name, keeping only mobile)
       const tableRows = payments.map((payment) => {
         const mobile = payment.customer?.mobile || "-";
         const vehicleReg = payment.vehicle?.registration_no || "-";
         const parkingNo = payment.vehicle?.parking_no || "-";
         const billDate = moment(payment.createdAt).format("DD/MM/YYYY");
-        const customerNotes = payment.customer?.notes || "-"; // Customer Notes
+        const customerNotes = payment.customer?.notes || "-";
 
-        // Extract carried forward amount from notes
         let carriedAmount = "-";
         const isMonthEndClosed =
           payment.notes &&
@@ -2135,7 +2131,6 @@ service.generatePDF = async (userInfo, filters) => {
           }
         }
 
-        // Paid date
         let paidDate = "Not Paid";
         if (payment.collectedDate) {
           paidDate = moment(payment.collectedDate).format("DD/MM/YYYY");
@@ -2159,64 +2154,167 @@ service.generatePDF = async (userInfo, filters) => {
         ];
       });
 
-      // Create table data (removed Customer column)
-      const tableData = {
-        headers: [
-          "ID",
-          "Mobile",
-          "Vehicle",
-          "Parking",
-          "Bill Date",
-          "Subscription",
-          "Previous Due",
-          "Total Due",
-          "Paid",
-          "Carried Fwd",
-          "Balance",
-          "Paid Date",
-          "Status",
-          "Customer Notes",
-        ],
-        rows: tableRows,
+      const columns = [
+        { key: "id", label: "ID", width: 36, align: "left" },
+        { key: "mobile", label: "Mobile", width: 62, align: "left" },
+        { key: "vehicle", label: "Vehicle", width: 52, align: "left" },
+        { key: "parking", label: "Parking", width: 46, align: "left" },
+        { key: "billDate", label: "Bill Date", width: 54, align: "left" },
+        { key: "subscription", label: "Subscription", width: 50, align: "right" },
+        { key: "previousDue", label: "Previous", width: 50, align: "right" },
+        { key: "totalDue", label: "Total Due", width: 52, align: "right" },
+        { key: "paid", label: "Paid", width: 44, align: "right" },
+        { key: "carried", label: "Carried", width: 48, align: "right" },
+        { key: "balance", label: "Balance", width: 50, align: "right" },
+        { key: "paidDate", label: "Paid Date", width: 54, align: "left" },
+        { key: "status", label: "Status", width: 50, align: "left" },
+        { key: "notes", label: "Notes", width: 62, align: "left" },
+      ];
+
+      const left = 40;
+      const rowHeight = 16;
+      const headerHeight = 18;
+      const getLayoutMetrics = () => {
+        const maxY = doc.page.height - doc.page.margins.bottom;
+        const footerLineY = maxY - 14;
+        const footerTextY = maxY - 10;
+        const rowMaxY = maxY - 24;
+        return { maxY, footerLineY, footerTextY, rowMaxY };
+      };
+      let pageNumber = 1;
+
+      const truncate = (value, maxChars) => {
+        const str = String(value ?? "-");
+        if (str.length <= maxChars) return str;
+        return `${str.slice(0, Math.max(0, maxChars - 3))}...`;
       };
 
-      // Render table with clean styling
-      doc.table(tableData, {
-        prepareHeader: () => {
-          doc.font("Helvetica-Bold").fontSize(8).fillColor("#1e40af");
-        },
-        prepareRow: (row, indexColumn, indexRow) => {
-          doc.font("Helvetica").fontSize(7).fillColor("#1f2937");
-        },
-        columnSpacing: 5,
-        padding: 5,
-        width: doc.page.width - 80,
-        x: 40,
-      });
+      const drawPageHeader = (isFirstPage = false) => {
+        if (!isFirstPage) {
+          return 42;
+        }
 
-      // Add colorful footer to all pages
-      const range = doc.bufferedPageRange();
-      const generatedText = `Generated on ${moment().format("DD/MM/YYYY HH:mm:ss")}`;
+        if (fs.existsSync(textLogoPath)) {
+          doc.image(textLogoPath, left, 26, { width: 180 });
+        } else if (fs.existsSync(iconLogoPath)) {
+          doc.image(iconLogoPath, left, 22, { width: 42, height: 42 });
+        }
 
-      for (let i = range.start; i < range.start + range.count; i++) {
-        doc.switchToPage(i);
+        doc
+          .fontSize(22)
+          .font("Helvetica-Bold")
+          .fillColor("#1e40af")
+          .text("Residence Payments Report", left + 110, 38, { align: "left" });
 
-        // Simple footer line
+        let y = 74;
+        doc
+          .strokeColor("#3b82f6")
+          .lineWidth(2)
+          .moveTo(left, y)
+          .lineTo(doc.page.width - left, y)
+          .stroke();
+
+        y += 12;
+        doc.fontSize(10).font("Helvetica").fillColor("#374151");
+        doc.text(`Date Range: ${startDate} to ${endDate}`, left, y);
+        doc.text(`Total Records: ${payments.length}`, left, y + 14);
+        doc.text(`Total Revenue: ${formatMoney(totals.totalDue)}`, left, y + 28);
+
+        if (isFirstPage) {
+          doc.text(`Collected: ${formatMoney(totals.totalPaid)}`, left + 260, y + 14);
+          doc.text(`Cash: ${formatMoney(totals.cash)}`, left + 260, y + 28);
+          doc.text(`Card: ${formatMoney(totals.card)}`, left + 390, y + 28);
+          doc.text(`Bank: ${formatMoney(totals.bank)}`, left + 510, y + 28);
+          return y + 56;
+        }
+
+        return y + 40;
+      };
+
+      const drawFooter = (pageNo) => {
+        const generatedText = `Generated on ${moment().format("DD/MM/YYYY HH:mm:ss")}`;
+        const { footerLineY, footerTextY } = getLayoutMetrics();
         doc
           .strokeColor("#3b82f6")
           .lineWidth(1)
-          .moveTo(40, doc.page.height - 35)
-          .lineTo(doc.page.width - 40, doc.page.height - 35)
+          .moveTo(40, footerLineY)
+          .lineTo(doc.page.width - 40, footerLineY)
           .stroke();
 
         doc.fontSize(8).fillColor("#1e40af").font("Helvetica");
         doc.text(
-          `${generatedText} | Page ${i - range.start + 1} of ${range.count} | BCW Car Wash Services`,
+          `${generatedText} | Page ${pageNo} | BCW Car Wash Services`,
           40,
-          doc.page.height - 28,
-          { align: "center", width: doc.page.width - 80 },
+          footerTextY,
+          { align: "center", width: doc.page.width - 80, lineBreak: false },
         );
-      }
+      };
+
+      const drawTableHeader = (y) => {
+        doc
+          .rect(left, y, doc.page.width - left * 2, headerHeight)
+          .fill("#eaf1ff");
+
+        doc.font("Helvetica-Bold").fontSize(7).fillColor("#1e40af");
+        let x = left;
+        columns.forEach((col) => {
+          doc.text(col.label, x + 2, y + 5, {
+            width: col.width - 4,
+            align: col.align === "right" ? "right" : "left",
+          });
+          x += col.width;
+        });
+
+        doc
+          .moveTo(left, y + headerHeight)
+          .lineTo(doc.page.width - left, y + headerHeight)
+          .lineWidth(0.8)
+          .strokeColor("#9ca3af")
+          .stroke();
+
+        return y + headerHeight;
+      };
+
+      let y = drawPageHeader(true);
+      y = drawTableHeader(y);
+
+      tableRows.forEach((row, index) => {
+        const { rowMaxY } = getLayoutMetrics();
+        if (y + rowHeight > rowMaxY) {
+          drawFooter(pageNumber);
+          doc.addPage();
+          pageNumber += 1;
+          y = drawPageHeader(false);
+          y = drawTableHeader(y);
+        }
+
+        if (index % 2 === 0) {
+          doc.rect(left, y, doc.page.width - left * 2, rowHeight).fill("#f9fafb");
+        }
+
+        doc.font("Helvetica").fontSize(7).fillColor("#1f2937");
+        let x = left;
+        row.forEach((cell, idx) => {
+          const col = columns[idx];
+          const maxChars = Math.max(6, Math.floor(col.width / 5.4));
+          doc.text(truncate(cell, maxChars), x + 2, y + 4, {
+            width: col.width - 4,
+            align: col.align === "right" ? "right" : "left",
+          });
+          x += col.width;
+        });
+
+        doc
+          .moveTo(left, y + rowHeight)
+          .lineTo(doc.page.width - left, y + rowHeight)
+          .lineWidth(0.3)
+          .strokeColor("#d1d5db")
+          .stroke();
+
+        y += rowHeight;
+      });
+
+      drawFooter(pageNumber);
 
       doc.end();
     } catch (error) {

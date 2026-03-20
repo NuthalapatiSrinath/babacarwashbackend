@@ -215,11 +215,11 @@ service.exportData = async (userInfo, query) => {
 
   // Determine date range
   const startDate = query.startDate
-    ? moment(query.startDate)
-    : moment().startOf("month");
+    ? moment.utc(query.startDate).startOf("day")
+    : moment.utc().startOf("month");
   const endDate = query.endDate
-    ? moment(query.endDate)
-    : moment().endOf("month");
+    ? moment.utc(query.endDate).endOf("day")
+    : moment.utc().endOf("month");
 
   // Get building/location name for header
   let locationName = "ATTENDANCE REPORT";
