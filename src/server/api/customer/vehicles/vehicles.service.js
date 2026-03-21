@@ -9,7 +9,20 @@ service.list = async (userInfo, query) => {
     isDeleted: false,
     _id: userInfo._id,
   }).lean();
-  return { total: data?.vehicles?.length, data: data?.vehicles || [] };
+
+  const includeInactive = String(query?.includeInactive || "") === "1";
+  const allVehicles = data?.vehicles || [];
+
+  const filteredVehicles = includeInactive
+    ? allVehicles
+    : allVehicles.filter((vehicle) => {
+        const status = Number(vehicle?.status);
+        // Default missing/invalid status to active for backward compatibility.
+        if (Number.isNaN(status)) return true;
+        return status === 1;
+      });
+
+  return { total: filteredVehicles.length, data: filteredVehicles };
 };
 
 service.info = async (userInfo, id) => {

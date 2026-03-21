@@ -47,6 +47,15 @@ service.create = async (userInfo, payload) => {
   let customerData = await CustomersModel.findOne({ _id: userInfo._id }).lean();
   let vehicleData = customerData.vehicles.find((e) => e._id == payload.vehicle);
 
+  const parkingNo = (payload.parking_no || "").toString().trim();
+  if (parkingNo) {
+    await CustomersModel.updateOne(
+      { "vehicles._id": payload.vehicle },
+      { $set: { "vehicles.$.parking_no": parkingNo } },
+    );
+    payload.parking_no = parkingNo;
+  }
+
   // Auto-note vehicle start date on first booking for better admin visibility.
   if (vehicleData && !vehicleData.start_date) {
     const startedAt = payload.start_date || payload.date || new Date();
