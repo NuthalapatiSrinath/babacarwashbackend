@@ -8,6 +8,35 @@ const InAppNotifications = require("../../../notifications/in-app.notifications"
 
 const service = module.exports;
 
+const ATTENDANCE_STATUS_CODES = new Set([
+  "AB",
+  "ND",
+  "SL",
+  "WO",
+  "EL",
+  "PL",
+  "UL",
+]);
+
+const EXPORT_COUNT_CODES = [
+  "P",
+  "AB",
+  "ND",
+  "SL",
+  "WO",
+  "EL",
+  "PL",
+  "UL",
+  "OFF",
+];
+
+const normalizeStatusCode = (value) => {
+  const code = String(value || "")
+    .trim()
+    .toUpperCase();
+  return ATTENDANCE_STATUS_CODES.has(code) ? code : "";
+};
+
 const buildSiteScopeFilter = async (query) => {
   const staffQuery = {
     isDeleted: false,
@@ -281,9 +310,19 @@ service.exportData = async (userInfo, query) => {
     }
 
     const dateKey = moment(record.date).format("YYYY-MM-DD");
-    employeeMap.get(empId).attendance[dateKey] = {
+    const employeeEntry = employeeMap.get(empId);
+
+    // Keep first record only because data is already sorted newest first.
+    if (employeeEntry.attendance[dateKey]) {
+      return;
+    }
+
+    employeeEntry.attendance[dateKey] = {
       present: record.present,
       type: record.type,
+      notes: record.notes,
+      statusCode:
+        normalizeStatusCode(record.type) || normalizeStatusCode(record.notes),
     };
   });
 
@@ -344,7 +383,9 @@ service.exportData = async (userInfo, query) => {
 
   // Add employee rows
   let slNo = 1;
-  const dailyTotals = new Array(dates.length).fill(0);
+  const dailyStatusTotals = Object.fromEntries(
+    EXPORT_COUNT_CODES.map((code) => [code, new Array(dates.length).fill(0)]),
+  );
 
   employeeMap.forEach((employee, empId) => {
     const rowData = [slNo++, employee.name, employee.code, employee.mobile];
@@ -361,7 +402,19 @@ service.exportData = async (userInfo, query) => {
       let cellValue = "";
 
       if (attendance) {
-        if (attendance.present) {
+        const resolvedCode = attendance.statusCode;
+
+        // If a known status code is selected (from dropdown/type), prefer it over P.
+        if (resolvedCode) {
+          cellValue = resolvedCode;
+
+          if (resolvedCode === "WO") {
+            // Week Off should not count as absent/working day.
+          } else {
+            absents++;
+            totalDays++;
+          }
+        } else if (attendance.present) {
           cellValue = "P";
           presents++;
           dailyTotals[index]++;
@@ -384,6 +437,10 @@ service.exportData = async (userInfo, query) => {
           // Working day with no record - count as working day but absent
           totalDays++;
         }
+      }
+
+      if (dailyStatusTotals[cellValue]) {
+        dailyStatusTotals[cellValue][index] += 1;
       }
 
       rowData.push(cellValue);
@@ -443,13 +500,30 @@ service.exportData = async (userInfo, query) => {
     });
   });
 
-  // Add totals row at bottom
-  const totalsRow = ["", "", "", ""];
-  dailyTotals.forEach((total) => totalsRow.push(total));
-  totalsRow.push("", "", "", "");
-  const totalRowNum = worksheet.addRow(totalsRow);
-  totalRowNum.font = { bold: true, color: { argb: "FFFF0000" } };
-  totalRowNum.alignment = { vertical: "middle", horizontal: "center" };
+  // Add date-wise totals rows for each status code
+  const countRowConfigs = [
+    { code: "P", label: "COUNT - PRESENT (P)", color: "FF1E7E34" },
+    { code: "AB", label: "COUNT - ABSENT (AB)", color: "FFC62828" },
+    { code: "ND", label: "COUNT - NO DUTY (ND)", color: "FF455A64" },
+    { code: "SL", label: "COUNT - SICK LEAVE (SL)", color: "FFEF6C00" },
+    { code: "WO", label: "COUNT - WEEK OFF (WO)", color: "FF2E7D32" },
+    { code: "EL", label: "COUNT - EMERGENCY LEAVE (EL)", color: "FF9C6B00" },
+    { code: "PL", label: "COUNT - PAID LEAVE (PL)", color: "FF1565C0" },
+    { code: "UL", label: "COUNT - UNPAID LEAVE (UL)", color: "FF6A1B9A" },
+    { code: "OFF", label: "COUNT - OFF", color: "FF6D4C41" },
+  ];
+
+  countRowConfigs.forEach(({ code, label, color }) => {
+    const totalsRow = ["", label, "", ""];
+    dates.forEach((_, idx) => {
+      totalsRow.push(dailyStatusTotals[code][idx] || 0);
+    });
+    totalsRow.push("", "", "", "");
+
+    const addedRow = worksheet.addRow(totalsRow);
+    addedRow.font = { bold: true, color: { argb: color } };
+    addedRow.alignment = { vertical: "middle", horizontal: "center" };
+  });
 
   // Set column widths
   worksheet.getColumn(1).width = 8; // SL.NO

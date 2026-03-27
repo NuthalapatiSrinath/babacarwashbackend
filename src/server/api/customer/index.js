@@ -15,5 +15,6 @@ router.use("/history", require("./history"));
 router.use("/vehicle-catalog", require("./vehicle-catalog"));
 router.use("/activity", require("./activity"));
 router.use("/configurations", require("./configurations"));
+router.use("/notifications", require("./notifications"));
 
 module.exports = router;
