@@ -44,6 +44,19 @@ const toSafeCustomerObject = (customer) => {
   return customerData;
 };
 
+const isDeletedCustomer = (customer) => {
+  const value = customer?.isDeleted;
+  if (typeof value === "string") {
+    return value.toLowerCase() === "true";
+  }
+  return value === true;
+};
+
+const isInactiveCustomer = (customer) => {
+  const status = Number(customer?.status);
+  return status === 0 || status === 2;
+};
+
 service.normalizeMobile = (mobile) =>
   (mobile || "").toString().replace(/[\s+\-]/g, "");
 
@@ -169,9 +182,12 @@ const pickBestCustomer = (customers) => {
   if (!Array.isArray(customers) || customers.length === 0) return null;
 
   const active = customers.filter(
-    (c) => !c.isDeleted && c.status !== 0 && c.status !== 2,
+    (c) => !isDeletedCustomer(c) && !isInactiveCustomer(c),
   );
-  const pool = active.length ? active : customers;
+  const nonDeleted = customers.filter((c) => !isDeletedCustomer(c));
+  const pool = active.length ? active : nonDeleted;
+
+  if (!pool.length) return null;
 
   return pool.sort((a, b) => {
     const scoreDiff = customerScore(b) - customerScore(a);
@@ -301,7 +317,7 @@ service.sendOTP = async (mobile) => {
     }
 
     // Check if customer is active
-    if (customer.isDeleted || customer.status === 0 || customer.status === 2) {
+    if (isDeletedCustomer(customer) || isInactiveCustomer(customer)) {
       throw "ACCOUNT_DEACTIVATED";
     }
 
@@ -388,7 +404,7 @@ service.verifyOTP = async (mobile, otp) => {
     }
 
     // Check if customer is active
-    if (customer.isDeleted || customer.status === 0 || customer.status === 2) {
+    if (isDeletedCustomer(customer) || isInactiveCustomer(customer)) {
       throw "ACCOUNT_DEACTIVATED";
     }
 
@@ -422,7 +438,7 @@ service.loginWithPassword = async (mobile, password) => {
     customer = await service.syncCustomerMobileWithCanonical(customer, mobile);
 
     // Check if customer is active
-    if (customer.isDeleted || customer.status === 0 || customer.status === 2) {
+    if (isDeletedCustomer(customer) || isInactiveCustomer(customer)) {
       throw "ACCOUNT_DEACTIVATED";
     }
 
