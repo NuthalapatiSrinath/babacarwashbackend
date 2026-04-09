@@ -2,6 +2,7 @@ const PaymentsModel = require("../../models/payments.model");
 const JobsModel = require("../../models/jobs.model");
 const OneWashModel = require("../../models/onewash.model");
 const BookingsModel = require("../../models/bookings.model");
+const CustomerCandidatesHelper = require("../customer-candidates.helper");
 const service = module.exports;
 
 const toNumber = (value, fallback = 0) => {
@@ -36,23 +37,32 @@ const normalizePageParams = (query = {}) => {
 };
 
 const normalizeDateRange = (query = {}) => {
-  if (query.startDate || query.endDate) {
-    const start = query.startDate ? new Date(query.startDate) : null;
-    const end = query.endDate ? new Date(query.endDate) : null;
+  const parseQueryDate = (value, { endOfDay = false } = {}) => {
+    if (!value) return null;
+    const text = String(value).trim();
+    if (!text) return null;
 
-    if (
-      start &&
-      !Number.isNaN(start.getTime()) &&
-      end &&
-      !Number.isNaN(end.getTime())
-    ) {
-      end.setHours(23, 59, 59, 999);
+    // Date-only filters should follow business timezone (Dubai, UTC+4).
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      const timePart = endOfDay ? "23:59:59.999" : "00:00:00.000";
+      const parsed = new Date(`${text}T${timePart}+04:00`);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  if (query.startDate || query.endDate) {
+    const start = parseQueryDate(query.startDate, { endOfDay: false });
+    const end = parseQueryDate(query.endDate, { endOfDay: true });
+
+    if (start && end) {
       return { start, end };
     }
 
-    if (start && !Number.isNaN(start.getTime())) {
-      const inferredEnd = new Date(start);
-      inferredEnd.setHours(23, 59, 59, 999);
+    if (start) {
+      const inferredEnd = parseQueryDate(query.startDate, { endOfDay: true });
       return { start, end: inferredEnd };
     }
   }
@@ -70,12 +80,102 @@ const normalizeDateRange = (query = {}) => {
   return null;
 };
 
+const getPaymentTimestamp = (payment = {}) => {
+  const raw = payment.collectedDate || payment.createdAt || payment.updatedAt;
+  if (raw) {
+    const time = new Date(raw).getTime();
+    if (!Number.isNaN(time)) return time;
+  }
+
+  const fallback = String(payment._id || "");
+  if (!fallback) return 0;
+  const parsed = new Date(fallback).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const getVehicleDedupKey = (payment = {}) => {
+  const registration = String(
+    payment?.vehicle?.registration_no || payment?.registration_no || "",
+  )
+    .trim()
+    .toUpperCase();
+
+  if (registration) {
+    return `${String(payment?.service_type || "").toLowerCase()}|reg|${registration}`;
+  }
+
+  const vehicleId = String(
+    payment?.vehicle?._id || payment?.vehicleId || "",
+  ).trim();
+  if (vehicleId) {
+    return `${String(payment?.service_type || "").toLowerCase()}|vid|${vehicleId}`;
+  }
+
+  return "";
+};
+
+const dedupeLatestPendingByVehicle = (rows = []) => {
+  if (!Array.isArray(rows) || rows.length <= 1) return rows;
+
+  const latestByVehicle = new Map();
+  const passthrough = [];
+
+  for (const row of rows) {
+    const vehicleKey = getVehicleDedupKey(row);
+
+    if (!vehicleKey) {
+      passthrough.push(row);
+      continue;
+    }
+
+    const current = latestByVehicle.get(vehicleKey);
+    if (!current) {
+      latestByVehicle.set(vehicleKey, row);
+      continue;
+    }
+
+    if (getPaymentTimestamp(row) > getPaymentTimestamp(current)) {
+      latestByVehicle.set(vehicleKey, row);
+    }
+  }
+
+  return [...latestByVehicle.values(), ...passthrough].sort(
+    (a, b) => getPaymentTimestamp(b) - getPaymentTimestamp(a),
+  );
+};
+
+const isSettledPayment = (payment = {}) => {
+  const due = Number(payment?.balance || 0);
+  const status = String(payment?.status || "pending").toLowerCase();
+  return (
+    (status === "completed" || status === "success" || status === "settled") &&
+    due <= 0
+  );
+};
+
+const summarySourceWithLatestPending = (rows = []) => {
+  if (!Array.isArray(rows) || !rows.length) return [];
+
+  const settled = [];
+  const pending = [];
+
+  for (const row of rows) {
+    if (isSettledPayment(row)) {
+      settled.push(row);
+    } else {
+      pending.push(row);
+    }
+  }
+
+  return [...settled, ...dedupeLatestPendingByVehicle(pending)];
+};
+
 service.list = async (userInfo, query) => {
-  const customerCandidates = [
-    userInfo._id,
-    String(userInfo._id),
-    userInfo._id?.toString?.(),
-  ].filter(Boolean);
+  const customerCandidates =
+    await CustomerCandidatesHelper.getRelatedCustomerCandidates(userInfo);
+  if (!customerCandidates.length) {
+    return { total: 0, data: [] };
+  }
   const paginationData = normalizePageParams(query);
   const findQuery = {
     isDeleted: false,
@@ -205,11 +305,25 @@ service.list = async (userInfo, query) => {
 
   if (dateRange) {
     normalizedData = normalizedData.filter((payment) => {
-      const rawDate = payment?.collectedDate || payment?.createdAt;
-      if (!rawDate) return false;
-      const paymentDate = new Date(rawDate);
-      if (Number.isNaN(paymentDate.getTime())) return false;
-      return paymentDate >= dateRange.start && paymentDate <= dateRange.end;
+      const dateCandidates = [
+        // Prefer bill-generation timestamps for monthly cycle filtering.
+        payment?.createdAt,
+        payment?.bill_date,
+        payment?.billDate,
+        payment?.billing_date,
+        payment?.updatedAt,
+        // Fallback only when bill timestamps are absent.
+        payment?.collectedDate,
+      ];
+
+      for (const rawDate of dateCandidates) {
+        if (!rawDate) continue;
+        const paymentDate = new Date(rawDate);
+        if (Number.isNaN(paymentDate.getTime())) continue;
+        return paymentDate >= dateRange.start && paymentDate <= dateRange.end;
+      }
+
+      return false;
     });
   }
 
@@ -233,11 +347,50 @@ service.list = async (userInfo, query) => {
     });
   }
 
+  if (statusFilter === "pending" || statusFilter === "open") {
+    // Match admin pending-dues logic: use latest pending row per vehicle.
+    normalizedData = dedupeLatestPendingByVehicle(normalizedData);
+  }
+
   const total = normalizedData.length;
+  const summarySource =
+    statusFilter === "pending" || statusFilter === "open"
+      ? normalizedData
+      : summarySourceWithLatestPending(normalizedData);
+  const summary = summarySource.reduce(
+    (acc, payment) => {
+      const paid = Number(payment?.amount_paid || 0);
+      const due = Number(payment?.balance || 0);
+      const status = String(payment?.status || "pending").toLowerCase();
+      const isSettled =
+        (status === "completed" ||
+          status === "success" ||
+          status === "settled") &&
+        due <= 0;
+
+      acc.totalPaid += paid;
+      acc.totalBalance += due;
+      acc.totalCount += 1;
+      if (isSettled) {
+        acc.settledCount += 1;
+      } else {
+        acc.pendingCount += 1;
+      }
+
+      return acc;
+    },
+    {
+      totalPaid: 0,
+      totalBalance: 0,
+      settledCount: 0,
+      pendingCount: 0,
+      totalCount: 0,
+    },
+  );
   const pagedData = normalizedData.slice(
     paginationData.skip,
     paginationData.skip + paginationData.limit,
   );
 
-  return { total, data: pagedData };
+  return { total, data: pagedData, summary };
 };

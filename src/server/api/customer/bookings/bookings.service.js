@@ -3,15 +3,13 @@ const CustomersModel = require("../../models/customers.model");
 const ConfigurationsModel = require("../../models/configurations.model");
 const CounterService = require("../../../utils/counters");
 const EmailNotificationService = require("../../../notifications/email.notifications");
+const CustomerCandidatesHelper = require("../customer-candidates.helper");
 const CommonHelper = require("../../../helpers/common.helper");
 const service = module.exports;
 
 service.list = async (userInfo, query) => {
-  const customerCandidates = [
-    userInfo._id,
-    String(userInfo._id),
-    userInfo._id?.toString?.(),
-  ].filter(Boolean);
+  const customerCandidates =
+    await CustomerCandidatesHelper.getRelatedCustomerCandidates(userInfo);
 
   const customerQuery = { customer: { $in: [...new Set(customerCandidates)] } };
 
@@ -30,9 +28,11 @@ service.list = async (userInfo, query) => {
     .populate("customer mall worker")
     .lean();
   for (const iterator of data) {
-    iterator.vehicle = iterator.customer.vehicles.find(
-      (e) => e._id == iterator.vehicle,
-    );
+    const customerVehicles = Array.isArray(iterator?.customer?.vehicles)
+      ? iterator.customer.vehicles
+      : [];
+    iterator.vehicle =
+      customerVehicles.find((e) => e._id == iterator.vehicle) || null;
   }
   const configurationsData = await ConfigurationsModel.findOne({});
   return { total, data, configurationsData };

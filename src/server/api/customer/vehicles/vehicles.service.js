@@ -38,28 +38,22 @@ service.create = async (userInfo, payload) => {
     throw "Registration number is required";
   }
 
-  if (!parking_no) {
-    throw "Parking number is required";
-  }
-
   const customerData = await CustomersModel.findOne({
     _id: userInfo._id,
   }).lean();
   const duplicate = (customerData?.vehicles || []).find(
     (v) =>
       (v.registration_no || "").toString().trim().toLowerCase() ===
-        registration_no.toLowerCase() &&
-      (v.parking_no || "").toString().trim().toLowerCase() ===
-        parking_no.toLowerCase(),
+      registration_no.toLowerCase(),
   );
 
   if (duplicate) {
-    throw "Vehicle with same registration and parking already exists";
+    throw "Vehicle with same registration already exists";
   }
 
   const vehicleData = {
     registration_no,
-    parking_no,
+    parking_no: parking_no || undefined,
     vehicle_type: payload.vehicle_type,
     brandId: payload.brandId,
     brandName: payload.brandName,

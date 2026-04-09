@@ -7,5 +7,6 @@ service.fetch = async () => {
     .lean();
   return {
     contactNumber: config?.contactNumber || "",
+    dashboardMarqueeText: config?.dashboardMarqueeText || "",
   };
 };

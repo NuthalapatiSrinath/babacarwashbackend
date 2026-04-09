@@ -92,18 +92,28 @@ pushNotifications.sendToTokens = async ({
 
   getFirebaseApp();
 
+  const normalizedImageUrl = String(imageUrl || "").trim();
   const response = await admin.messaging().sendEachForMulticast({
     tokens: uniqueTokens,
     notification: {
       title: String(title || "BCW Notification"),
       body: String(body || ""),
-      ...(imageUrl ? { imageUrl: String(imageUrl) } : null),
+      ...(normalizedImageUrl ? { imageUrl: normalizedImageUrl } : null),
     },
-    data: normalizeDataPayload(data),
+    data: normalizeDataPayload({
+      ...data,
+      ...(normalizedImageUrl ? { imageUrl: normalizedImageUrl } : null),
+    }),
     android: {
       priority: "high",
       notification: {
         channelId: "bcw_customer_high_importance",
+        ...(normalizedImageUrl ? { imageUrl: normalizedImageUrl } : null),
+      },
+    },
+    webpush: {
+      notification: {
+        ...(normalizedImageUrl ? { image: normalizedImageUrl } : null),
       },
     },
     apns: {

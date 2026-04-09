@@ -1,15 +1,17 @@
 const JobsModel = require("../../models/jobs.model");
 const CustomersModel = require("../../models/customers.model");
+const CustomerCandidatesHelper = require("../customer-candidates.helper");
 const CommonHelper = require("../../../helpers/common.helper");
 const service = module.exports;
 
 service.list = async (userInfo, query) => {
   const paginationData = CommonHelper.paginationData(query);
-  const customerCandidates = [
-    userInfo._id,
-    String(userInfo._id),
-    userInfo._id?.toString?.(),
-  ].filter(Boolean);
+  const customerCandidates =
+    await CustomerCandidatesHelper.getRelatedCustomerCandidates(userInfo);
+
+  if (!customerCandidates.length) {
+    return { total: 0, data: [] };
+  }
 
   const findQuery = {
     isDeleted: false,
@@ -24,10 +26,13 @@ service.list = async (userInfo, query) => {
       .limit(paginationData.limit)
       .populate("worker building")
       .lean(),
-    CustomersModel.findOne({ _id: userInfo._id }, { vehicles: 1 }).lean(),
+    CustomersModel.find(
+      { _id: { $in: customerCandidates } },
+      { vehicles: 1 },
+    ).lean(),
   ]);
 
-  const vehicles = customerData?.vehicles || [];
+  const vehicles = customerData.flatMap((customer) => customer?.vehicles || []);
 
   for (const job of jobs) {
     const vehicle = vehicles.find((v) => String(v._id) === String(job.vehicle));

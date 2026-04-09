@@ -24,15 +24,6 @@ ollama pull llama3
 
 You can change model name later (example: `llama3.1`, `qwen2.5`, etc.).
 
-If Coolify terminal is not working, use backend auto-pull instead:
-
-```env
-OLLAMA_AUTO_PULL=true
-OLLAMA_PULL_TIMEOUT_MS=1800000
-```
-
-Then restart backend and send any chat request once. Backend will call Ollama `/api/pull` automatically when model is missing.
-
 ## 3) Point backend to Coolify Ollama
 
 Update backend env (your real `.env`, not `.env.example`):
@@ -41,8 +32,6 @@ Update backend env (your real `.env`, not `.env.example`):
 OLLAMA_BASE_URL=https://ollama.your-domain.com
 OLLAMA_MODEL=llama3
 OLLAMA_TIMEOUT_MS=120000
-OLLAMA_AUTO_PULL=true
-OLLAMA_PULL_TIMEOUT_MS=1800000
 ```
 
 If backend is running on your local machine (not inside Coolify), do not use `http://ollama:11434`.
@@ -102,7 +91,7 @@ curl -sS -X POST http://localhost:3002/api/chat \
 ## Troubleshooting
 
 - Error says model not installed:
-  - Keep `OLLAMA_AUTO_PULL=true` and send one chat request, or run `ollama pull <model>` once when terminal is available.
+  - Run `ollama pull <model>` on the Ollama server/container, then retry.
 - Timeout:
   - Increase `OLLAMA_TIMEOUT_MS`.
 - Connection error:

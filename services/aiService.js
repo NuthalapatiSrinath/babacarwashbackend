@@ -18,14 +18,6 @@ const resolveOllamaUrl = () => {
 const OLLAMA_URL = resolveOllamaUrl();
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3";
 const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 120000);
-const OLLAMA_AUTO_PULL = !["0", "false", "no", "off"].includes(
-  String(process.env.OLLAMA_AUTO_PULL || "true")
-    .trim()
-    .toLowerCase(),
-);
-const OLLAMA_PULL_TIMEOUT_MS = Number(
-  process.env.OLLAMA_PULL_TIMEOUT_MS || 1800000,
-);
 const OLLAMA_API_KEY = String(process.env.OLLAMA_API_KEY || "").trim();
 const OLLAMA_AUTH_HEADER =
   String(process.env.OLLAMA_AUTH_HEADER || "Authorization").trim() ||
@@ -33,25 +25,6 @@ const OLLAMA_AUTH_HEADER =
 const OLLAMA_AUTH_SCHEME = String(
   process.env.OLLAMA_AUTH_SCHEME || "Bearer",
 ).trim();
-
-const resolveApiUrl = (pathName) => {
-  try {
-    const url = new URL(OLLAMA_URL);
-    url.pathname = pathName;
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch (_) {
-    const fallbackBase = normalizeBaseUrl(
-      OLLAMA_URL.replace(/\/api\/(chat|generate).*$/i, ""),
-    );
-    return `${fallbackBase}${pathName}`;
-  }
-};
-
-const OLLAMA_TAGS_URL = resolveApiUrl("/api/tags");
-const OLLAMA_PULL_URL = resolveApiUrl("/api/pull");
-let ongoingModelPullPromise = null;
 
 const buildHeaders = () => {
   const headers = {
@@ -95,26 +68,6 @@ const requestOllama = async ({
   }
 };
 
-const modelBaseName = (value) =>
-  String(value || "")
-    .trim()
-    .toLowerCase()
-    .split(":")[0];
-
-const hasRequestedModel = (payload) => {
-  const models = Array.isArray(payload?.models) ? payload.models : [];
-  const targetModel = modelBaseName(OLLAMA_MODEL);
-
-  return models.some((entry) => {
-    const name =
-      typeof entry === "string"
-        ? entry
-        : entry?.name || entry?.model || entry?.tag || "";
-
-    return modelBaseName(name) === targetModel;
-  });
-};
-
 const isModelMissingError = (statusCode, responseText = "") => {
   const text = String(responseText || "").toLowerCase();
 
@@ -128,67 +81,6 @@ const isModelMissingError = (statusCode, responseText = "") => {
       text.includes("not installed") ||
       text.includes("pull"))
   );
-};
-
-const ensureModelAvailable = async () => {
-  if (!OLLAMA_AUTO_PULL) return;
-
-  if (ongoingModelPullPromise) {
-    await ongoingModelPullPromise;
-    return;
-  }
-
-  ongoingModelPullPromise = (async () => {
-    try {
-      const tagsResponse = await requestOllama({
-        url: OLLAMA_TAGS_URL,
-        method: "GET",
-        timeoutMs: Math.min(OLLAMA_TIMEOUT_MS, 30000),
-      });
-
-      if (tagsResponse.ok) {
-        const tagsPayload = await tagsResponse.json();
-        if (hasRequestedModel(tagsPayload)) {
-          return;
-        }
-      }
-    } catch (_) {
-      // Ignore pre-check errors and attempt pull directly.
-    }
-
-    try {
-      const pullResponse = await requestOllama({
-        url: OLLAMA_PULL_URL,
-        method: "POST",
-        body: JSON.stringify({
-          name: OLLAMA_MODEL,
-          stream: false,
-        }),
-        timeoutMs: OLLAMA_PULL_TIMEOUT_MS,
-      });
-
-      if (!pullResponse.ok) {
-        const pullErrorBody = await safeReadText(pullResponse);
-        throw new Error(
-          `Failed to auto-pull Ollama model "${OLLAMA_MODEL}" (status ${pullResponse.status}${pullErrorBody ? `: ${pullErrorBody}` : ""}).`,
-        );
-      }
-
-      await safeReadText(pullResponse);
-    } catch (error) {
-      if (error && error.name === "AbortError") {
-        throw new Error(
-          `Auto-pull timed out after ${OLLAMA_PULL_TIMEOUT_MS}ms while downloading model "${OLLAMA_MODEL}".`,
-        );
-      }
-
-      throw error;
-    }
-  })().finally(() => {
-    ongoingModelPullPromise = null;
-  });
-
-  await ongoingModelPullPromise;
 };
 
 const buildRequestBody = (prompt) => {
@@ -235,34 +127,18 @@ export async function askAI(prompt) {
   const normalizedPrompt = prompt.trim();
 
   try {
-    let response = await requestOllama({
+    const response = await requestOllama({
       url: OLLAMA_URL,
       method: "POST",
       body: JSON.stringify(buildRequestBody(normalizedPrompt)),
     });
 
-    let errorBody = response.ok ? "" : await safeReadText(response);
-
-    if (
-      !response.ok &&
-      isModelMissingError(response.status, errorBody) &&
-      OLLAMA_AUTO_PULL
-    ) {
-      await ensureModelAvailable();
-
-      response = await requestOllama({
-        url: OLLAMA_URL,
-        method: "POST",
-        body: JSON.stringify(buildRequestBody(normalizedPrompt)),
-      });
-
-      errorBody = response.ok ? "" : await safeReadText(response);
-    }
-
     if (!response.ok) {
+      const errorBody = await safeReadText(response);
+
       if (isModelMissingError(response.status, errorBody)) {
         throw new Error(
-          `Ollama model "${OLLAMA_MODEL}" is not installed. Set OLLAMA_AUTO_PULL=true or pull model manually.`,
+          `Ollama model "${OLLAMA_MODEL}" is not installed. Pull it manually on the Ollama server: ollama pull ${OLLAMA_MODEL}`,
         );
       }
 

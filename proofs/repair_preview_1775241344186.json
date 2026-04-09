@@ -1,0 +1,195 @@
+{
+  "input": {
+    "proofFile": "C:\\Users\\SRINATH\\Music\\BCW\\backend\\proofs\\worker_assignment_proof_20260403_221300.json",
+    "apply": false,
+    "requestedRows": 24,
+    "uniqueJobIds": 24,
+    "targetWorker": {
+      "id": "6996f51c56c85700146f8f9e",
+      "name": "SHAHZAIB MUHAMMAD NAWAZ",
+      "mobile": "971543762711"
+    }
+  },
+  "summary": {
+    "foundJobs": 24,
+    "eligible": 0,
+    "updated": 0,
+    "skipped_notFound": 0,
+    "skipped_alreadyTargetWorker": 0,
+    "skipped_oldWorkerMismatch": 0,
+    "skipped_statusNotPending": 0,
+    "skipped_hasPayments": 0,
+    "skipped_vehicleMismatch": 0,
+    "skipped_assignedDateMismatch": 24
+  },
+  "details": [
+    {
+      "jobId": "69cfc7ecb8c6a70058837ef0",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ef1",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eda",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edc",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eef",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eea",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee9",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee4",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee5",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee0",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee3",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee2",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee1",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edf",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ede",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edb",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eee",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eed",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eec",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eeb",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee8",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee7",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee6",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edd",
+      "action": "skip",
+      "reason": "assigned_date_mismatch",
+      "expectedAssignedDate": "2026-04-04",
+      "currentAssignedDate": "2026-04-03"
+    }
+  ]
+}

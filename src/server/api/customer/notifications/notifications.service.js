@@ -1,6 +1,12 @@
 const CustomerDeviceTokenModel = require("../../models/customer-device-tokens.model");
+const InAppNotificationsModel = require("../../models/in-app-notifications.model");
 
 const service = module.exports;
+
+const toInt = (value, fallback) => {
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+};
 
 service.registerDeviceToken = async (userInfo, payload = {}) => {
   const token = String(payload.token || "").trim();
@@ -68,4 +74,108 @@ service.listMyDeviceTokens = async (userInfo) => {
   )
     .sort({ updatedAt: -1 })
     .lean();
+};
+
+service.listInAppNotifications = async (userInfo, query = {}) => {
+  const customerId = String(
+    userInfo && userInfo._id ? userInfo._id : "",
+  ).trim();
+  if (!customerId) {
+    return { data: [], total: 0, pageNo: 0, pageSize: 20 };
+  }
+
+  const pageNo = Math.max(toInt(query.pageNo ?? query.page, 0), 0);
+  const pageSize = Math.min(
+    Math.max(toInt(query.pageSize ?? query.limit, 20), 1),
+    100,
+  );
+  const onlyUnread = String(query.onlyUnread || "").toLowerCase() === "true";
+
+  const filter = { customer: customerId };
+  if (onlyUnread) {
+    filter.isRead = false;
+  }
+
+  const [data, total] = await Promise.all([
+    InAppNotificationsModel.find(filter)
+      .sort({ _id: -1 })
+      .skip(pageNo * pageSize)
+      .limit(pageSize)
+      .lean(),
+    InAppNotificationsModel.countDocuments(filter),
+  ]);
+
+  return { data, total, pageNo, pageSize };
+};
+
+service.getInAppUnreadCount = async (userInfo) => {
+  const customerId = String(
+    userInfo && userInfo._id ? userInfo._id : "",
+  ).trim();
+  if (!customerId) {
+    return { count: 0 };
+  }
+
+  const count = await InAppNotificationsModel.countDocuments({
+    customer: customerId,
+    isRead: false,
+  });
+
+  return { count };
+};
+
+service.markInAppRead = async (userInfo, notificationId) => {
+  const customerId = String(
+    userInfo && userInfo._id ? userInfo._id : "",
+  ).trim();
+  const id = String(notificationId || "").trim();
+
+  if (!customerId || !id) {
+    return { modifiedCount: 0 };
+  }
+
+  const now = new Date();
+
+  const data = await InAppNotificationsModel.findOneAndUpdate(
+    { _id: id, customer: customerId },
+    {
+      $set: {
+        isRead: true,
+        readAt: now,
+        openedAt: now,
+      },
+    },
+    { new: true },
+  ).lean();
+
+  return {
+    modifiedCount: data ? 1 : 0,
+    data,
+  };
+};
+
+service.markAllInAppRead = async (userInfo) => {
+  const customerId = String(
+    userInfo && userInfo._id ? userInfo._id : "",
+  ).trim();
+  if (!customerId) {
+    return { modifiedCount: 0 };
+  }
+
+  const now = new Date();
+
+  const result = await InAppNotificationsModel.updateMany(
+    { customer: customerId, isRead: false },
+    {
+      $set: {
+        isRead: true,
+        readAt: now,
+        openedAt: now,
+      },
+    },
+  );
+
+  return {
+    modifiedCount: result.modifiedCount || result.nModified || 0,
+  };
 };

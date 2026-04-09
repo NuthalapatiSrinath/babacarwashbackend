@@ -17,5 +17,25 @@ router.get(
   AuthHelper.authenticate,
   controller.listMyDeviceTokens,
 );
+router.get(
+  "/in-app",
+  AuthHelper.authenticate,
+  controller.listInAppNotifications,
+);
+router.get(
+  "/in-app/count",
+  AuthHelper.authenticate,
+  controller.getInAppUnreadCount,
+);
+router.post(
+  "/in-app/:id/read",
+  AuthHelper.authenticate,
+  controller.markInAppRead,
+);
+router.post(
+  "/in-app/read-all",
+  AuthHelper.authenticate,
+  controller.markAllInAppRead,
+);
 
 module.exports = router;

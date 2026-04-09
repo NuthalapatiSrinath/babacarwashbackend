@@ -1,0 +1,243 @@
+{
+  "input": {
+    "proofFile": "C:\\Users\\SRINATH\\Music\\BCW\\backend\\proofs\\worker_assignment_proof_20260403_221300.json",
+    "apply": false,
+    "requestedRows": 24,
+    "uniqueJobIds": 24,
+    "targetWorker": {
+      "id": "6996f51c56c85700146f8f9e",
+      "name": "SHAHZAIB MUHAMMAD NAWAZ",
+      "mobile": "971543762711"
+    }
+  },
+  "summary": {
+    "foundJobs": 24,
+    "eligible": 24,
+    "updated": 0,
+    "skipped_notFound": 0,
+    "skipped_alreadyTargetWorker": 0,
+    "skipped_oldWorkerMismatch": 0,
+    "skipped_statusNotPending": 0,
+    "skipped_hasPayments": 0,
+    "skipped_vehicleMismatch": 0,
+    "skipped_assignedDateMismatch": 0
+  },
+  "details": [
+    {
+      "jobId": "69cfc7ecb8c6a70058837ef0",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "65178",
+      "customerId": 3826
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ef1",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "88528",
+      "customerId": 3826
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eda",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "O4832",
+      "customerId": 3709
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edc",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "64236",
+      "customerId": 3713
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eef",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "2467",
+      "customerId": 3769
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eea",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "56052",
+      "customerId": 3764
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee9",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "43274",
+      "customerId": 3763
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee4",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "37322",
+      "customerId": 3759
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee5",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "48551",
+      "customerId": 3759
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee0",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "4130",
+      "customerId": 3755
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee3",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "67733",
+      "customerId": 3758
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee2",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "62100",
+      "customerId": 3757
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee1",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "54936",
+      "customerId": 3756
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edf",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "11273",
+      "customerId": 3754
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ede",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "73145",
+      "customerId": 3749
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edb",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "60605",
+      "customerId": 3712
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eee",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "87348",
+      "customerId": 3768
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eed",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "6187",
+      "customerId": 3767
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eec",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "25459",
+      "customerId": 3766
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837eeb",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "85652",
+      "customerId": 3765
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee8",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "29325",
+      "customerId": 3762
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee7",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "89058",
+      "customerId": 3761
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837ee6",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "82502",
+      "customerId": 3760
+    },
+    {
+      "jobId": "69cfc7ecb8c6a70058837edd",
+      "action": "preview_update",
+      "fromWorkerId": "6996f51d56c85700146f901a",
+      "toWorkerId": "6996f51c56c85700146f8f9e",
+      "status": "pending",
+      "registrationNo": "86700",
+      "customerId": 3715
+    }
+  ]
+}

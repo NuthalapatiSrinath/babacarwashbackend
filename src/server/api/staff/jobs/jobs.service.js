@@ -411,8 +411,9 @@ service.list = async (userInfo, query) => {
       : [];
 
     iterator.vehicle =
-      customerVehicles.find((vehicle) => areSameId(vehicle?._id, iterator.vehicle)) ||
-      null;
+      customerVehicles.find((vehicle) =>
+        areSameId(vehicle?._id, iterator.vehicle),
+      ) || null;
 
     let key = ["mobile", "mall"].includes(iterator.service_type)
       ? iterator.service_type.toUpperCase()

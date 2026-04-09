@@ -4,12 +4,13 @@ const mongoose = require("mongoose");
 const schema = new mongoose.Schema(
   {
     contactNumber: { type: String },
+    dashboardMarqueeText: { type: String },
   },
   {
     versionKey: false,
     strict: false,
     timestamps: true,
-  }
+  },
 );
 
 module.exports = mongoose.model("configurations", schema);

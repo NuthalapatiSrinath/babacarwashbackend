@@ -2,6 +2,7 @@ const CustomersModel = require("../../models/customers.model");
 const JobsModel = require("../../models/jobs.model");
 const LocationsModel = require("../../controllers/locations/locations.model");
 const BuildingsModel = require("../../models/buildings.model");
+const CustomerCandidatesHelper = require("../customer-candidates.helper");
 const AuthHelper = require("./auth.helper");
 const service = module.exports;
 
@@ -75,9 +76,8 @@ service.me = async (payload) => {
     throw "UNAUTHORIZED";
   }
 
-  const customerCandidates = [user._id, String(user._id), user._id?.toString?.()].filter(
-    Boolean,
-  );
+  const customerCandidates =
+    await CustomerCandidatesHelper.getRelatedCustomerCandidates(user);
 
   const bookings = await JobsModel.countDocuments({
     isDeleted: false,

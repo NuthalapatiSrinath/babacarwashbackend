@@ -24,8 +24,8 @@ const COUNTRY_CODES = [
 ];
 const DEFAULT_COUNTRY_CODE = "971";
 
-// Testing mode: enabled by default unless explicitly turned off.
-// Set OTP_TEST_MODE=false in environment to enforce real OTP validation.
+// Testing mode controls SMS sending and OTP visibility in API response.
+// OTP validation is always enforced during verifyOTP.
 const OTP_TEST_MODE = process.env.OTP_TEST_MODE !== "false";
 
 const uniq = (arr) => [...new Set(arr.filter(Boolean))];
@@ -34,7 +34,9 @@ const toSafeCustomerObject = (customer) => {
   if (!customer) return null;
 
   const customerData =
-    typeof customer.toObject === "function" ? customer.toObject() : { ...customer };
+    typeof customer.toObject === "function"
+      ? customer.toObject()
+      : { ...customer };
 
   delete customerData.hPassword;
   delete customerData.password;
@@ -97,7 +99,10 @@ service.canonicalizeMobile = (mobile) => {
     return `${DEFAULT_COUNTRY_CODE}${normalized.replace(/^0+/, "")}`;
   }
 
-  if (/^\d{8,10}$/.test(normalized) && !COUNTRY_CODES.some((c) => normalized.startsWith(c))) {
+  if (
+    /^\d{8,10}$/.test(normalized) &&
+    !COUNTRY_CODES.some((c) => normalized.startsWith(c))
+  ) {
     return `${DEFAULT_COUNTRY_CODE}${normalized}`;
   }
 
@@ -143,15 +148,17 @@ service.buildMobileCandidates = (mobile) => {
 };
 
 const customerScore = (customer) => {
-  const vehicles = Array.isArray(customer?.vehicles) ? customer.vehicles.length : 0;
+  const vehicles = Array.isArray(customer?.vehicles)
+    ? customer.vehicles.length
+    : 0;
   const hasName = Boolean(
     (customer?.firstName || "").toString().trim() ||
-      (customer?.lastName || "").toString().trim(),
+    (customer?.lastName || "").toString().trim(),
   );
   const hasProfileAddress = Boolean(
     (customer?.location || "").toString().trim() ||
-      (customer?.building || "").toString().trim() ||
-      (customer?.flat_no || "").toString().trim(),
+    (customer?.building || "").toString().trim() ||
+    (customer?.flat_no || "").toString().trim(),
   );
 
   // Prefer richer records to avoid selecting newly auto-created empty customer rows.
@@ -194,7 +201,10 @@ service.syncCustomerMobileWithCanonical = async (customer, inputMobile) => {
 
   if (conflict) return customer;
 
-  await CustomersModel.updateOne({ _id: customer._id }, { $set: { mobile: canonical } });
+  await CustomersModel.updateOne(
+    { _id: customer._id },
+    { $set: { mobile: canonical } },
+  );
 
   return {
     ...customer,
@@ -284,7 +294,10 @@ service.sendOTP = async (mobile) => {
     if (!customer) {
       customer = await service.createCustomerForMobile(mobile);
     } else {
-      customer = await service.syncCustomerMobileWithCanonical(customer, mobile);
+      customer = await service.syncCustomerMobileWithCanonical(
+        customer,
+        mobile,
+      );
     }
 
     // Check if customer is active
@@ -341,28 +354,27 @@ service.verifyOTP = async (mobile, otp) => {
       throw "INVALID_OTP";
     }
 
-    if (!OTP_TEST_MODE) {
-      // Find the latest OTP for this mobile
-      const otpMobileCandidates = service.buildMobileCandidates(normalizedMobile);
-      const otpRecord = await OTPModel.findOne({
-        mobile: { $in: otpMobileCandidates },
-        otp: parseInt(otpText, 10),
-        verified: false,
-      }).sort({ createdAt: -1 });
+    // Always validate OTP against persisted records.
+    // Test mode only controls SMS delivery and OTP visibility in response.
+    const otpMobileCandidates = service.buildMobileCandidates(normalizedMobile);
+    const otpRecord = await OTPModel.findOne({
+      mobile: { $in: otpMobileCandidates },
+      otp: parseInt(otpText, 10),
+      verified: false,
+    }).sort({ createdAt: -1 });
 
-      if (!otpRecord) {
-        throw "INVALID_OTP";
-      }
-
-      // Check if OTP expired
-      if (moment().isAfter(otpRecord.expiresAt)) {
-        throw "OTP_EXPIRED";
-      }
-
-      // Mark OTP as verified
-      otpRecord.verified = true;
-      await otpRecord.save();
+    if (!otpRecord) {
+      throw "INVALID_OTP";
     }
+
+    // Check if OTP expired
+    if (moment().isAfter(otpRecord.expiresAt)) {
+      throw "OTP_EXPIRED";
+    }
+
+    // Mark OTP as verified
+    otpRecord.verified = true;
+    await otpRecord.save();
 
     // Get customer data using flexible matching
     let { customer } = await service.findCustomerByMobile(normalizedMobile);
