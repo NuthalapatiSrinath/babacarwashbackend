@@ -40,14 +40,18 @@ controller.exportData = async (req, res) => {
     try {
         const { user, query } = req
         const workbook = await service.exportData(user, query)
-        workbook.xlsx.write(res).then(() => {
-            res.end();
-        }).catch((err) => {
-            console.error(err);
-            res.status(500).send('Internal Server Error');
-        });
+        res.setHeader(
+            'Content-Type',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="Attendance_Export_${Date.now()}.xlsx"`
+        )
+        await workbook.xlsx.write(res)
+        return res.end()
     } catch (error) {
         console.error(error)
-        return res.status(200).json({ status: false, message: 'Internal server error', error })
+        return res.status(500).json({ status: false, message: 'Internal server error', error })
     }
 }

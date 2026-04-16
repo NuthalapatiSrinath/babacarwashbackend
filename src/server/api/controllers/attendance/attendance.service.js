@@ -417,7 +417,6 @@ service.exportData = async (userInfo, query) => {
         } else if (attendance.present) {
           cellValue = "P";
           presents++;
-          dailyTotals[index]++;
           totalDays++;
         } else {
           // Use type field first (for attendance codes like WO, AB, ND, SL),
