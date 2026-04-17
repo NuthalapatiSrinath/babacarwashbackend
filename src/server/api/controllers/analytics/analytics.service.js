@@ -59,6 +59,8 @@ service.dashboardAll = async (userInfo, query) => {
     const todayStart = new Date(now.setHours(0, 0, 0, 0));
     const yesterdayStart = new Date(todayStart);
     yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+    const tomorrowStart = new Date(todayStart);
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
     const thisWeekStart = new Date(todayStart);
     thisWeekStart.setDate(thisWeekStart.getDate() - now.getDay());
     const lastWeekStart = new Date(thisWeekStart);
@@ -1688,13 +1690,37 @@ service.dashboardAll = async (userInfo, query) => {
             {
               $facet: {
                 todayStatus: [
-                  { $match: { createdAt: { $gte: todayStart } } },
+                  {
+                    $addFields: {
+                      dailyServiceDate: {
+                        $ifNull: ["$assignedDate", "$createdAt"],
+                      },
+                    },
+                  },
+                  {
+                    $match: {
+                      dailyServiceDate: {
+                        $gte: todayStart,
+                        $lt: tomorrowStart,
+                      },
+                    },
+                  },
                   { $group: { _id: "$status", count: { $sum: 1 } } },
                 ],
                 yesterdayStatus: [
                   {
+                    $addFields: {
+                      dailyServiceDate: {
+                        $ifNull: ["$assignedDate", "$createdAt"],
+                      },
+                    },
+                  },
+                  {
                     $match: {
-                      createdAt: { $gte: yesterdayStart, $lt: todayStart },
+                      dailyServiceDate: {
+                        $gte: yesterdayStart,
+                        $lt: todayStart,
+                      },
                     },
                   },
                   { $group: { _id: "$status", count: { $sum: 1 } } },
@@ -1707,7 +1733,11 @@ service.dashboardAll = async (userInfo, query) => {
             {
               $facet: {
                 todayStatus: [
-                  { $match: { createdAt: { $gte: todayStart } } },
+                  {
+                    $match: {
+                      createdAt: { $gte: todayStart, $lt: tomorrowStart },
+                    },
+                  },
                   { $group: { _id: "$status", count: { $sum: 1 } } },
                 ],
                 yesterdayStatus: [
