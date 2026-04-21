@@ -275,6 +275,12 @@ service.list = async (userInfo, query) => {
         : supervisorWorkerFilter
           ? { worker: { $in: supervisorWorkerFilter } }
           : null),
+      ...(query.customer && query.customer.trim() !== ""
+        ? { customer: query.customer }
+        : null),
+      ...(query.createdBy && query.createdBy.trim() !== ""
+        ? { createdBy: query.createdBy }
+        : null),
       ...(query.building && query.building.trim() !== ""
         ? { building: query.building }
         : null),

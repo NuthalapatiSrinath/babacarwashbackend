@@ -99,6 +99,14 @@ service.list = async (userInfo, query) => {
     findQuery.worker = { $in: limitToWorkerIds };
   }
 
+  if (isValidId(query.customer)) {
+    findQuery.customer = query.customer;
+  }
+
+  if (query.createdBy && query.createdBy.trim() !== "") {
+    findQuery.createdBy = query.createdBy;
+  }
+
   if (query.search) {
     const searchRegex = { $regex: query.search, $options: "i" };
     const matchingWorkers = await WorkersModel.find(

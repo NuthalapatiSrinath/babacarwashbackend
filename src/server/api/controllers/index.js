@@ -10,6 +10,7 @@ router.use("/customers", require("./customers"));
 router.use("/jobs", require("./jobs"));
 router.use("/onewash", require("./onewash"));
 router.use("/payments", require("./payments"));
+router.use("/ai", require("./ai"));
 router.use("/analytics", require("./analytics"));
 router.use("/import-logs", require("./import-logs"));
 router.use("/supervisors", require("./supervisors"));
