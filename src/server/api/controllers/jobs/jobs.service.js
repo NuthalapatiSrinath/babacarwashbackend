@@ -4,6 +4,7 @@ const exceljs = require("exceljs");
 const JobsModel = require("../../models/jobs.model");
 const PaymentsModel = require("../../models/payments.model");
 const CustomersModel = require("../../models/customers.model");
+const BuildingsModel = require("../../models/buildings.model");
 const CounterService = require("../../../utils/counters");
 const CommonHelper = require("../../../helpers/common.helper");
 const AuthHelper = require("../auth/auth.helper");
@@ -23,6 +24,72 @@ const cleanQuery = (q) => {
     }
   }
   return cleaned;
+};
+
+const toNumberSafe = (value) => {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizeRegParkingKey = (registrationNo, parkingNo) => {
+  const reg = String(registrationNo || "")
+    .trim()
+    .toUpperCase();
+  const parking = String(parkingNo || "")
+    .trim()
+    .toUpperCase();
+  if (!reg && !parking) return "";
+  return `reg:${reg}::park:${parking}`;
+};
+
+const resolveDueDateLabel = (payment) => {
+  if (!payment) return "-";
+
+  if (payment.billing_month) {
+    const dueMoment = moment(payment.billing_month, "YYYY-MM").endOf("month");
+    return dueMoment.isValid() ? dueMoment.format("DD-MMM-YYYY") : "-";
+  }
+
+  const createdAt = moment(payment.createdAt);
+  if (!createdAt.isValid()) return "-";
+  return createdAt.subtract(1, "day").endOf("month").format("DD-MMM-YYYY");
+};
+
+const sanitizeSheetName = (name) => {
+  const base = String(name || "Building")
+    .replace(/[:\\/?*\[\]]/g, "_")
+    .trim();
+  if (!base) return "Building";
+  return base.slice(0, 31);
+};
+
+const resolveUniqueSheetName = (workbook, desiredName) => {
+  const base = sanitizeSheetName(desiredName);
+  const existing = new Set(
+    workbook.worksheets.map((sheet) => sheet.name.toLowerCase()),
+  );
+
+  if (!existing.has(base.toLowerCase())) {
+    return base;
+  }
+
+  let index = 1;
+  while (true) {
+    const suffix = `_${index}`;
+    const candidate = `${base.slice(0, Math.max(1, 31 - suffix.length))}${suffix}`;
+    if (!existing.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+    index += 1;
+  }
+};
+
+const isTruthyQueryFlag = (value) => {
+  if (typeof value === "boolean") return value;
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
 };
 
 // --- LIST ---
@@ -458,6 +525,17 @@ service.exportData = async (userInfo, rawQuery) => {
 
 // --- MONTHLY STATEMENT (UPDATED: TIPS CALCULATION + EXCEL FIXES) ---
 service.monthlyStatement = async (userInfo, query) => {
+  let selectedBuildingName = String(query.buildingName || "").trim();
+  if (!selectedBuildingName && isValidId(query.building)) {
+    const selectedBuilding = await BuildingsModel.findOne({
+      _id: query.building,
+      isDeleted: { $ne: true },
+    })
+      .select("name")
+      .lean();
+    selectedBuildingName = selectedBuilding?.name || "";
+  }
+
   const findQuery = {
     isDeleted: false,
     status: "completed",
@@ -466,6 +544,10 @@ service.monthlyStatement = async (userInfo, query) => {
       $lte: moment(new Date(query.year, query.month, 1)).endOf("month"),
     },
   };
+
+  if (isValidId(query.building)) {
+    findQuery.building = query.building;
+  }
 
   // Add worker filter if workerId provided (and not empty string)
   if (query.workerId && query.workerId.trim() !== "") {
@@ -492,7 +574,7 @@ service.monthlyStatement = async (userInfo, query) => {
   const statusFindQuery = { ...findQuery };
   delete statusFindQuery.status;
   const statusJobs = await JobsModel.find(statusFindQuery)
-    .select("status")
+    .select("status assignedDate")
     .lean();
 
   const statusCounts = {
@@ -501,12 +583,33 @@ service.monthlyStatement = async (userInfo, query) => {
     pending: 0,
     rejected: 0,
   };
+  const todayStatusCounts = {
+    total: 0,
+    completed: 0,
+    pending: 0,
+    rejected: 0,
+  };
+  const nowDubai = moment().tz("Asia/Dubai");
+  const todayStart = nowDubai.clone().startOf("day");
+  const todayEnd = nowDubai.clone().endOf("day");
+
   for (const job of statusJobs) {
     statusCounts.total++;
     const status = String(job.status || "").toLowerCase();
     if (status === "completed") statusCounts.completed++;
     else if (status === "pending") statusCounts.pending++;
     else if (status === "rejected") statusCounts.rejected++;
+
+    const assignedMoment = moment(job.assignedDate).tz("Asia/Dubai");
+    if (
+      assignedMoment.isValid() &&
+      assignedMoment.isBetween(todayStart, todayEnd, null, "[]")
+    ) {
+      todayStatusCounts.total++;
+      if (status === "completed") todayStatusCounts.completed++;
+      else if (status === "pending") todayStatusCounts.pending++;
+      else if (status === "rejected") todayStatusCounts.rejected++;
+    }
   }
 
   const daysInMonth = moment(findQuery.assignedDate.$gte).daysInMonth();
@@ -526,6 +629,7 @@ service.monthlyStatement = async (userInfo, query) => {
     const allJobsForMonth = await JobsModel.find({
       isDeleted: false,
       worker: query.workerId,
+      ...(isValidId(query.building) ? { building: query.building } : null),
       assignedDate: {
         $gte: moment(new Date(query.year, query.month, 1)).startOf("month"),
         $lte: moment(new Date(query.year, query.month, 1)).endOf("month"),
@@ -558,7 +662,79 @@ service.monthlyStatement = async (userInfo, query) => {
       isDeleted: false,
       "vehicles.worker": query.workerId,
       "vehicles.status": 1, // Only active vehicles
-    }).lean();
+      ...(isValidId(query.building) ? { building: query.building } : null),
+    })
+      .populate({ path: "building", model: "buildings", select: "name" })
+      .lean();
+
+    const customerIds = customers
+      .map((customer) => customer?._id)
+      .filter((id) => !!id);
+
+    const pendingPayments = customerIds.length
+      ? await PaymentsModel.find({
+          isDeleted: false,
+          onewash: false,
+          customer: { $in: customerIds },
+        })
+          .sort({ createdAt: -1, _id: -1 })
+          .select({
+            customer: 1,
+            vehicle: 1,
+            total_amount: 1,
+            amount_paid: 1,
+            billing_month: 1,
+            createdAt: 1,
+            status: 1,
+            settled: 1,
+          })
+          .lean()
+      : [];
+
+    const pendingByVehicleId = new Map();
+    const pendingByRegParking = new Map();
+
+    pendingPayments.forEach((payment) => {
+      const customerId = String(payment?.customer || "").trim();
+      if (!customerId) return;
+
+      const status = String(payment?.status || "").toLowerCase();
+      const settled = String(payment?.settled || "").toLowerCase();
+      const dueAmount = Math.max(
+        0,
+        toNumberSafe(payment?.total_amount) - toNumberSafe(payment?.amount_paid),
+      );
+
+      if (dueAmount <= 0) return;
+      if (settled === "completed") return;
+      if (status === "completed" || status === "cancelled") return;
+
+      const vehicle = payment?.vehicle;
+      const paymentIdKey =
+        vehicle && typeof vehicle === "object"
+          ? String(vehicle?._id || "").trim()
+          : String(vehicle || "").trim();
+
+      if (paymentIdKey) {
+        const key = `${customerId}__id:${paymentIdKey}`;
+        if (!pendingByVehicleId.has(key)) {
+          pendingByVehicleId.set(key, payment);
+        }
+      }
+
+      if (vehicle && typeof vehicle === "object") {
+        const regParkingKey = normalizeRegParkingKey(
+          vehicle.registration_no,
+          vehicle.parking_no,
+        );
+        if (regParkingKey) {
+          const key = `${customerId}__${regParkingKey}`;
+          if (!pendingByRegParking.has(key)) {
+            pendingByRegParking.set(key, payment);
+          }
+        }
+      }
+    });
 
     const carMap = new Map();
 
@@ -568,6 +744,16 @@ service.monthlyStatement = async (userInfo, query) => {
         `${customer.firstName || ""} ${customer.lastName || ""}`.trim() ||
         customer.mobile ||
         "Unknown";
+      const customerId = String(customer._id || customer.id || "").trim();
+
+      const buildingName =
+        (typeof customer.building === "object" && customer.building?.name) ||
+        customer.buildingName ||
+        "Unknown Building";
+      const buildingId =
+        typeof customer.building === "object"
+          ? customer.building?._id
+          : customer.building;
 
       customer.vehicles.forEach((vehicle) => {
         // Only process vehicles assigned to this worker
@@ -627,6 +813,29 @@ service.monthlyStatement = async (userInfo, query) => {
 
         const vehicleId = vehicle._id.toString();
         const historicalDays = historicalScheduleMap[vehicleId] || new Set();
+
+        const paymentByVehicleId = customerId
+          ? pendingByVehicleId.get(`${customerId}__id:${vehicleId}`)
+          : null;
+
+        const regParkingKey = normalizeRegParkingKey(
+          vehicle.registration_no,
+          vehicle.parking_no,
+        );
+        const paymentByRegParking =
+          customerId && regParkingKey
+            ? pendingByRegParking.get(`${customerId}__${regParkingKey}`)
+            : null;
+
+        const duePayment = paymentByVehicleId || paymentByRegParking || null;
+        const dueAmount = duePayment
+          ? Math.max(
+              0,
+              toNumberSafe(duePayment.total_amount) -
+                toNumberSafe(duePayment.amount_paid),
+            )
+          : 0;
+        const dueDate = resolveDueDateLabel(duePayment);
 
         // Calculate schedule marks for each day in the month
         const dailyMarks = new Array(daysInMonth).fill(0);
@@ -701,9 +910,12 @@ service.monthlyStatement = async (userInfo, query) => {
           dailyMarks: dailyMarks,
           amount: vehicle.amount || 0,
           duDate: vehicleEnd ? moment(vehicleEnd).format("DD-MMM") : "-",
+          dueAmount,
+          dueDate,
           workerName: "",
           locationName: "",
-          buildingName: "",
+          buildingId: buildingId ? String(buildingId) : "",
+          buildingName,
           tips: 0,
           scheduleType: vehicle.schedule_type || "daily",
           scheduleDays: scheduleDays,
@@ -721,6 +933,7 @@ service.monthlyStatement = async (userInfo, query) => {
       const columnTotals = new Array(daysInMonth).fill(0);
       let grandTotal = 0;
       let totalTips = 0;
+      const buildingCountsMap = new Map();
       carList.forEach((car) => {
         if (car.dailyMarks) {
           car.dailyMarks.forEach((mark, i) => {
@@ -729,7 +942,23 @@ service.monthlyStatement = async (userInfo, query) => {
           grandTotal += car.dailyMarks.reduce((s, m) => s + (m || 0), 0);
         }
         totalTips += car.tips || 0;
+
+        const buildingId = String(car.buildingId || "").trim();
+        const buildingName = String(car.buildingName || "Unknown Building");
+        const key = buildingId || `name:${buildingName}`;
+        const current = buildingCountsMap.get(key) || {
+          buildingId,
+          buildingName,
+          count: 0,
+        };
+        current.count += 1;
+        buildingCountsMap.set(key, current);
       });
+
+      const buildingCounts = Array.from(buildingCountsMap.values()).sort((a, b) =>
+        String(a.buildingName || "").localeCompare(String(b.buildingName || "")),
+      );
+
       return {
         data: carList,
         total: carList.length,
@@ -737,6 +966,8 @@ service.monthlyStatement = async (userInfo, query) => {
         grandTotal,
         totalTips,
         statusCounts,
+        todayStatusCounts,
+        buildingCounts,
       };
     }
 
@@ -784,6 +1015,29 @@ service.monthlyStatement = async (userInfo, query) => {
       dailyCounts: worker.dailyCounts,
       tips: worker.tips,
     }));
+
+    const buildingCountsMap = new Map();
+    data.forEach((job) => {
+      const buildingId =
+        (typeof job.building === "object" && String(job.building?._id || "")) ||
+        String(job.building || "");
+      const buildingName =
+        (typeof job.building === "object" && job.building?.name) ||
+        "Unknown Building";
+      const key = buildingId || `name:${buildingName}`;
+      const current = buildingCountsMap.get(key) || {
+        buildingId,
+        buildingName,
+        count: 0,
+      };
+      current.count += 1;
+      buildingCountsMap.set(key, current);
+    });
+
+    const buildingCounts = Array.from(buildingCountsMap.values()).sort((a, b) =>
+      String(a.buildingName || "").localeCompare(String(b.buildingName || "")),
+    );
+
     const columnTotals = new Array(daysInMonth).fill(0);
     let grandTotal = 0;
     let totalTips = 0;
@@ -803,6 +1057,8 @@ service.monthlyStatement = async (userInfo, query) => {
       grandTotal,
       totalTips,
       statusCounts,
+      todayStatusCounts,
+      buildingCounts,
     };
   }
 
@@ -814,19 +1070,39 @@ service.monthlyStatement = async (userInfo, query) => {
 
   // Set row heights
   reportSheet.getRow(1).height = 40;
-  reportSheet.getRow(2).height = 20;
+  reportSheet.getRow(2).height = selectedBuildingName ? 28 : 20;
 
   const isWorkerSelected = !!(
     query.workerId && String(query.workerId).trim() !== ""
   );
-  const selectedWorkerName = isWorkerSelected
-    ? data[0]?.worker?.name
-    : "ALL WORKERS";
+  const isResidenceWorkerSelected =
+    isWorkerSelected &&
+    String(query.service_type || "").toLowerCase() === "residence";
+  let selectedWorkerName = "ALL WORKERS";
+  if (isWorkerSelected) {
+    selectedWorkerName =
+      String(query.workerName || "").trim() ||
+      String(data[0]?.worker?.name || "").trim();
+
+    if (!selectedWorkerName && isValidId(query.workerId)) {
+      const selectedWorker = await WorkersModel.findOne({
+        _id: query.workerId,
+        isDeleted: { $ne: true },
+      })
+        .select("name")
+        .lean();
+      selectedWorkerName = String(selectedWorker?.name || "").trim();
+    }
+
+    if (!selectedWorkerName) {
+      selectedWorkerName = "Unknown";
+    }
+  }
 
   // --- HEADER ROW 1: Company Name with Logo Space ---
   // Adjusted columns to include "Customer ID", "Mobile", and "Tips" columns
   const totalCols = isWorkerSelected
-    ? 7 + daysInMonth + 3
+    ? 7 + daysInMonth + (isResidenceWorkerSelected ? 2 : 3)
     : 2 + daysInMonth + 1;
 
   reportSheet.mergeCells(1, 1, 1, totalCols);
@@ -885,9 +1161,13 @@ service.monthlyStatement = async (userInfo, query) => {
   if (isWorkerSelected) {
     reportSheet.mergeCells(2, 1, 2, Math.ceil(totalCols / 2));
     const monthCell = reportSheet.getCell("A2");
-    monthCell.value = `Month & Year: ${monthName.toUpperCase()} ${year}`;
+    monthCell.value = `Month & Year: ${monthName.toUpperCase()} ${year}${selectedBuildingName ? ` | Building: ${selectedBuildingName}` : ""}`;
     monthCell.font = { bold: true, size: 10 };
-    monthCell.alignment = { horizontal: "center", vertical: "middle" };
+    monthCell.alignment = {
+      horizontal: "center",
+      vertical: "middle",
+      wrapText: true,
+    };
     monthCell.fill = {
       type: "pattern",
       pattern: "solid",
@@ -908,7 +1188,7 @@ service.monthlyStatement = async (userInfo, query) => {
   } else {
     reportSheet.mergeCells(2, 1, 2, totalCols);
     const subtitleCell = reportSheet.getCell("A2");
-    subtitleCell.value = `${monthName.toUpperCase()} ${year} - RESIDENCE LOCATIONS ONLY`;
+    subtitleCell.value = `${monthName.toUpperCase()} ${year} - RESIDENCE LOCATIONS ONLY${selectedBuildingName ? ` | BUILDING: ${String(selectedBuildingName).toUpperCase()}` : ""}`;
     subtitleCell.font = { bold: true, size: 11 };
     subtitleCell.alignment = { horizontal: "center", vertical: "middle" };
     subtitleCell.fill = {
@@ -930,9 +1210,9 @@ service.monthlyStatement = async (userInfo, query) => {
       "DATE OF START",
       "CLEANING",
       ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-      "Total",
-      "Tips",
-      "DU DATE",
+      ...(isResidenceWorkerSelected
+        ? ["Due Payment", "Due Date"]
+        : ["Total", "Tips", "DU DATE"]),
     ]);
   } else {
     headerRow1 = reportSheet.addRow([
@@ -996,9 +1276,7 @@ service.monthlyStatement = async (userInfo, query) => {
         const date = moment(findQuery.assignedDate.$gte).add(i, "days");
         return date.format("ddd").substring(0, 2);
       }),
-      "",
-      "",
-      "",
+      ...(isResidenceWorkerSelected ? ["", ""] : ["", "", ""]),
     ]);
   } else {
     dayNamesRow = reportSheet.addRow([
@@ -1070,6 +1348,11 @@ service.monthlyStatement = async (userInfo, query) => {
     if (isWorkerSelected) {
       // Calculate row total for car
       const rowTotal = item.dailyMarks.reduce((a, b) => a + b, 0);
+      const rowDueAmount = Math.max(
+        0,
+        Number(item.dueAmount || item.duePayment || item.balanceDue || 0),
+      );
+      const rowDueDate = item.dueDate || item.duDate || "-";
 
       rowData = [
         rowNumber,
@@ -1080,9 +1363,9 @@ service.monthlyStatement = async (userInfo, query) => {
         item.dateOfStart,
         item.cleaning,
         ...item.dailyMarks.map((count) => (count > 0 ? count : "")),
-        rowTotal,
-        item.tips,
-        item.duDate,
+        ...(isResidenceWorkerSelected
+          ? [rowDueAmount, rowDueDate]
+          : [rowTotal, item.tips, item.duDate]),
       ];
 
       rowNumber++;
@@ -1139,6 +1422,7 @@ service.monthlyStatement = async (userInfo, query) => {
   const dayCounts = new Array(daysInMonth).fill(0);
   let totalAllTips = 0;
   let totalAllCars = 0;
+  let totalAllDueAmount = 0;
 
   if (isWorkerSelected) {
     dataSource.forEach((car) => {
@@ -1152,6 +1436,10 @@ service.monthlyStatement = async (userInfo, query) => {
         );
       }
       totalAllTips += Number(car.tips) || 0;
+      totalAllDueAmount += Math.max(
+        0,
+        Number(car.dueAmount || car.duePayment || car.balanceDue || 0),
+      );
     });
   } else {
     workerSummaries.forEach((worker) => {
@@ -1165,19 +1453,34 @@ service.monthlyStatement = async (userInfo, query) => {
 
   let summaryRow;
   if (isWorkerSelected) {
-    summaryRow = reportSheet.addRow([
-      "",
-      "Total Cleaned Cars",
-      "",
-      "",
-      "",
-      "",
-      "",
-      ...dayCounts,
-      totalAllCars,
-      totalAllTips, // ✅ Total Tips
-      "",
-    ]);
+    summaryRow = reportSheet.addRow(
+      isResidenceWorkerSelected
+        ? [
+            "",
+            "Total Cleaned Cars",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ...dayCounts,
+            totalAllDueAmount,
+            "",
+          ]
+        : [
+            "",
+            "Total Cleaned Cars",
+            "",
+            "",
+            "",
+            "",
+            "",
+            ...dayCounts,
+            totalAllCars,
+            totalAllTips, // ✅ Total Tips
+            "",
+          ],
+    );
   } else {
     summaryRow = reportSheet.addRow([
       "",
@@ -1222,47 +1525,147 @@ service.monthlyStatement = async (userInfo, query) => {
     }
   });
 
-  // --- STATUS SUMMARY ---
-  const statusTitleRow = reportSheet.addRow([]);
-  const statusHeader = reportSheet.addRow(["", "STATUS SUMMARY"]);
-  statusHeader.getCell(2).font = {
-    bold: true,
-    color: { argb: "FFFFFF" },
-  };
-  statusHeader.getCell(2).fill = {
+  // --- STATUS SUMMARY (Today vs Total) ---
+  reportSheet.addRow([]);
+
+  const summaryHeaderRow = reportSheet.addRow([]);
+  const summaryHeaderRowNo = summaryHeaderRow.number;
+  reportSheet.mergeCells(summaryHeaderRowNo, 2, summaryHeaderRowNo, 5);
+  reportSheet.mergeCells(summaryHeaderRowNo, 7, summaryHeaderRowNo, 10);
+
+  const todayHeaderCell = reportSheet.getCell(summaryHeaderRowNo, 2);
+  todayHeaderCell.value = "TODAY SUMMARY";
+  todayHeaderCell.font = { bold: true, size: 10, color: { argb: "FFFFFF" } };
+  todayHeaderCell.alignment = { horizontal: "center", vertical: "middle" };
+  todayHeaderCell.fill = {
     type: "pattern",
     pattern: "solid",
-    fgColor: { argb: "1F4E78" },
+    fgColor: { argb: "0F766E" },
   };
 
-  const statusRow = reportSheet.addRow([
-    "",
-    "Total Washes",
-    statusCounts.total,
-    "Completed",
-    statusCounts.completed,
-    "Pending",
-    statusCounts.pending,
-    "Rejected",
-    statusCounts.rejected,
-  ]);
+  const totalHeaderCell = reportSheet.getCell(summaryHeaderRowNo, 7);
+  totalHeaderCell.value = "TOTAL SUMMARY";
+  totalHeaderCell.font = { bold: true, size: 10, color: { argb: "FFFFFF" } };
+  totalHeaderCell.alignment = { horizontal: "center", vertical: "middle" };
+  totalHeaderCell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "1E3A8A" },
+  };
 
-  for (let col = 2; col <= 9; col++) {
-    const cell = statusRow.getCell(col);
-    cell.font = { bold: true, size: 9 };
-    cell.alignment = { horizontal: "center", vertical: "middle" };
+  for (let col = 2; col <= 5; col++) {
+    const cell = reportSheet.getCell(summaryHeaderRowNo, col);
     cell.border = {
       top: { style: "thin" },
       left: { style: "thin" },
       bottom: { style: "thin" },
       right: { style: "thin" },
     };
-    cell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "E8EEF7" },
+  }
+  for (let col = 7; col <= 10; col++) {
+    const cell = reportSheet.getCell(summaryHeaderRowNo, col);
+    cell.border = {
+      top: { style: "thin" },
+      left: { style: "thin" },
+      bottom: { style: "thin" },
+      right: { style: "thin" },
     };
   }
+
+  const summaryRows = [
+    {
+      leftLabel: "Today Washes",
+      leftValue: todayStatusCounts.total,
+      rightLabel: "Total Washes",
+      rightValue: statusCounts.total,
+    },
+    {
+      leftLabel: "Today Completed",
+      leftValue: todayStatusCounts.completed,
+      rightLabel: "Completed",
+      rightValue: statusCounts.completed,
+    },
+    {
+      leftLabel: "Today Pending",
+      leftValue: todayStatusCounts.pending,
+      rightLabel: "Pending",
+      rightValue: statusCounts.pending,
+    },
+    {
+      leftLabel: "Today Rejected",
+      leftValue: todayStatusCounts.rejected,
+      rightLabel: "Rejected",
+      rightValue: statusCounts.rejected,
+    },
+  ];
+
+  summaryRows.forEach((summary) => {
+    const row = reportSheet.addRow([]);
+    const rowNo = row.number;
+
+    reportSheet.mergeCells(rowNo, 2, rowNo, 4);
+    reportSheet.mergeCells(rowNo, 7, rowNo, 9);
+
+    const leftLabelCell = reportSheet.getCell(rowNo, 2);
+    leftLabelCell.value = summary.leftLabel;
+    leftLabelCell.font = { bold: true, size: 9, color: { argb: "134E4A" } };
+    leftLabelCell.alignment = { horizontal: "left", vertical: "middle" };
+    leftLabelCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "CCFBF1" },
+    };
+
+    const leftValueCell = reportSheet.getCell(rowNo, 5);
+    leftValueCell.value = Number(summary.leftValue) || 0;
+    leftValueCell.font = { bold: true, size: 10, color: { argb: "134E4A" } };
+    leftValueCell.alignment = { horizontal: "center", vertical: "middle" };
+    leftValueCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "99F6E4" },
+    };
+
+    const rightLabelCell = reportSheet.getCell(rowNo, 7);
+    rightLabelCell.value = summary.rightLabel;
+    rightLabelCell.font = { bold: true, size: 9, color: { argb: "1E3A8A" } };
+    rightLabelCell.alignment = { horizontal: "left", vertical: "middle" };
+    rightLabelCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "DBEAFE" },
+    };
+
+    const rightValueCell = reportSheet.getCell(rowNo, 10);
+    rightValueCell.value = Number(summary.rightValue) || 0;
+    rightValueCell.font = { bold: true, size: 10, color: { argb: "1E3A8A" } };
+    rightValueCell.alignment = { horizontal: "center", vertical: "middle" };
+    rightValueCell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "BFDBFE" },
+    };
+
+    for (let col = 2; col <= 5; col++) {
+      const cell = reportSheet.getCell(rowNo, col);
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    }
+
+    for (let col = 7; col <= 10; col++) {
+      const cell = reportSheet.getCell(rowNo, col);
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    }
+  });
 
   // Set column widths
   if (isWorkerSelected) {
@@ -1276,9 +1679,13 @@ service.monthlyStatement = async (userInfo, query) => {
     for (let i = 8; i <= 7 + daysInMonth; i++) {
       reportSheet.getColumn(i).width = 3.5;
     }
-    reportSheet.getColumn(8 + daysInMonth).width = 10;
-    reportSheet.getColumn(9 + daysInMonth).width = 10;
-    reportSheet.getColumn(10 + daysInMonth).width = 10; // DU Date
+    reportSheet.getColumn(8 + daysInMonth).width =
+      isResidenceWorkerSelected ? 14 : 10;
+    reportSheet.getColumn(9 + daysInMonth).width =
+      isResidenceWorkerSelected ? 14 : 10;
+    if (!isResidenceWorkerSelected) {
+      reportSheet.getColumn(10 + daysInMonth).width = 10; // DU Date
+    }
   } else {
     reportSheet.getColumn(1).width = 8;
     reportSheet.getColumn(2).width = 20;
@@ -1287,6 +1694,186 @@ service.monthlyStatement = async (userInfo, query) => {
     }
     reportSheet.getColumn(3 + daysInMonth).width = 10; // Total
     reportSheet.getColumn(4 + daysInMonth).width = 10; // Tips
+  }
+
+  const shouldIncludeBuildingWiseSheets =
+    isWorkerSelected &&
+    String(query.service_type || "").toLowerCase() === "residence" &&
+    isTruthyQueryFlag(query.buildingWise);
+
+  if (shouldIncludeBuildingWiseSheets) {
+    const groupedByBuilding = new Map();
+    (Array.isArray(dataSource) ? dataSource : []).forEach((car) => {
+      const key = String(car?.buildingName || "Unknown Building").trim() ||
+        "Unknown Building";
+      if (!groupedByBuilding.has(key)) {
+        groupedByBuilding.set(key, []);
+      }
+      groupedByBuilding.get(key).push(car);
+    });
+
+    groupedByBuilding.forEach((cars, buildingName) => {
+      const sheetName = resolveUniqueSheetName(workbook, buildingName);
+      const sheet = workbook.addWorksheet(sheetName);
+      const totalColsForBuildingSheet = 8 + daysInMonth;
+
+      sheet.mergeCells(1, 1, 1, totalColsForBuildingSheet);
+      const titleCell = sheet.getCell(1, 1);
+      titleCell.value = `${buildingName} - ${monthName.toUpperCase()} ${year}`;
+      titleCell.font = { bold: true, size: 12, color: { argb: "FFFFFF" } };
+      titleCell.alignment = { horizontal: "center", vertical: "middle" };
+      titleCell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "1F4E78" },
+      };
+
+      const headerRow = sheet.addRow([
+        "Sl. No",
+        "Parking No",
+        "Car No.",
+        "Date of Start",
+        "Cleaning",
+        ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+        "Scheduled",
+        "Due Payment",
+        "Due Date",
+      ]);
+
+      headerRow.eachCell((cell, colNumber) => {
+        cell.font = { bold: true, size: 9, color: { argb: "FFFFFF" } };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "2F75B5" },
+        };
+
+        if (colNumber > 5 && colNumber <= 5 + daysInMonth) {
+          const dayIndex = colNumber - 6;
+          const date = moment(findQuery.assignedDate.$gte).add(dayIndex, "days");
+          if (date.day() === 0) {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FFFF00" },
+            };
+            cell.font = { bold: true, size: 9, color: { argb: "000000" } };
+          }
+        }
+      });
+
+      const dayTotals = new Array(daysInMonth).fill(0);
+      let scheduledTotal = 0;
+      let dueTotal = 0;
+
+      cars.forEach((car, index) => {
+        const marks = Array.isArray(car?.dailyMarks)
+          ? car.dailyMarks
+          : new Array(daysInMonth).fill(0);
+        const rowScheduledTotal = marks.reduce((sum, mark) => sum + (mark || 0), 0);
+        const rowDueAmount = Math.max(0, toNumberSafe(car?.dueAmount));
+
+        marks.forEach((mark, markIndex) => {
+          dayTotals[markIndex] += Number(mark || 0);
+        });
+        scheduledTotal += rowScheduledTotal;
+        dueTotal += rowDueAmount;
+
+        const row = sheet.addRow([
+          index + 1,
+          car?.parkingNo || "-",
+          car?.carNumber || "-",
+          car?.dateOfStart || "-",
+          car?.cleaning || "-",
+          ...marks.map((mark) => (mark > 0 ? mark : "")),
+          rowScheduledTotal,
+          rowDueAmount,
+          car?.dueDate || "-",
+        ]);
+
+        row.eachCell((cell, colNumber) => {
+          cell.border = {
+            top: { style: "thin" },
+            left: { style: "thin" },
+            bottom: { style: "thin" },
+            right: { style: "thin" },
+          };
+          cell.alignment = { horizontal: "center", vertical: "middle" };
+          cell.font = { size: 9 };
+
+          if (colNumber > 5 && colNumber <= 5 + daysInMonth) {
+            const dayIndex = colNumber - 6;
+            const date = moment(findQuery.assignedDate.$gte).add(dayIndex, "days");
+            if (date.day() === 0) {
+              cell.fill = {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFF8C6" },
+              };
+            }
+          }
+        });
+      });
+
+      const totalRow = sheet.addRow([
+        "",
+        "TOTAL",
+        "",
+        "",
+        "",
+        ...dayTotals,
+        scheduledTotal,
+        dueTotal,
+        "",
+      ]);
+
+      totalRow.eachCell((cell, colNumber) => {
+        cell.font = { bold: true, size: 10 };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" },
+        };
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "D9E1F2" },
+        };
+
+        if (colNumber > 5 && colNumber <= 5 + daysInMonth) {
+          const dayIndex = colNumber - 6;
+          const date = moment(findQuery.assignedDate.$gte).add(dayIndex, "days");
+          if (date.day() === 0) {
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FFFF00" },
+            };
+          }
+        }
+      });
+
+      sheet.getColumn(1).width = 8;
+      sheet.getColumn(2).width = 16;
+      sheet.getColumn(3).width = 14;
+      sheet.getColumn(4).width = 14;
+      sheet.getColumn(5).width = 10;
+      for (let col = 6; col <= 5 + daysInMonth; col++) {
+        sheet.getColumn(col).width = 4;
+      }
+      sheet.getColumn(6 + daysInMonth).width = 12;
+      sheet.getColumn(7 + daysInMonth).width = 14;
+      sheet.getColumn(8 + daysInMonth).width = 14;
+    });
   }
 
   return workbook;
