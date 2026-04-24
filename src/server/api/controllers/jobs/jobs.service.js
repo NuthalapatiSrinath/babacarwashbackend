@@ -671,7 +671,7 @@ service.monthlyStatement = async (userInfo, query) => {
       .map((customer) => customer?._id)
       .filter((id) => !!id);
 
-    const pendingPayments = customerIds.length
+    const customerPayments = customerIds.length
       ? await PaymentsModel.find({
           isDeleted: false,
           onewash: false,
@@ -691,29 +691,52 @@ service.monthlyStatement = async (userInfo, query) => {
           .lean()
       : [];
 
+    const latestByVehicleId = new Map();
+    const latestByRegParking = new Map();
     const pendingByVehicleId = new Map();
     const pendingByRegParking = new Map();
 
-    pendingPayments.forEach((payment) => {
+    customerPayments.forEach((payment) => {
       const customerId = String(payment?.customer || "").trim();
       if (!customerId) return;
-
-      const status = String(payment?.status || "").toLowerCase();
-      const settled = String(payment?.settled || "").toLowerCase();
-      const dueAmount = Math.max(
-        0,
-        toNumberSafe(payment?.total_amount) - toNumberSafe(payment?.amount_paid),
-      );
-
-      if (dueAmount <= 0) return;
-      if (settled === "completed") return;
-      if (status === "completed" || status === "cancelled") return;
 
       const vehicle = payment?.vehicle;
       const paymentIdKey =
         vehicle && typeof vehicle === "object"
           ? String(vehicle?._id || "").trim()
           : String(vehicle || "").trim();
+
+      if (paymentIdKey) {
+        const key = `${customerId}__id:${paymentIdKey}`;
+        if (!latestByVehicleId.has(key)) {
+          latestByVehicleId.set(key, payment);
+        }
+      }
+
+      if (vehicle && typeof vehicle === "object") {
+        const regParkingKey = normalizeRegParkingKey(
+          vehicle.registration_no,
+          vehicle.parking_no,
+        );
+        if (regParkingKey) {
+          const key = `${customerId}__${regParkingKey}`;
+          if (!latestByRegParking.has(key)) {
+            latestByRegParking.set(key, payment);
+          }
+        }
+      }
+
+      const status = String(payment?.status || "").toLowerCase();
+      const settled = String(payment?.settled || "").toLowerCase();
+      const dueAmount = Math.max(
+        0,
+        toNumberSafe(payment?.total_amount) -
+          toNumberSafe(payment?.amount_paid),
+      );
+
+      if (dueAmount <= 0) return;
+      if (settled === "completed") return;
+      if (status === "completed" || status === "cancelled") return;
 
       if (paymentIdKey) {
         const key = `${customerId}__id:${paymentIdKey}`;
@@ -827,7 +850,18 @@ service.monthlyStatement = async (userInfo, query) => {
             ? pendingByRegParking.get(`${customerId}__${regParkingKey}`)
             : null;
 
+        const latestPaymentByVehicleId = customerId
+          ? latestByVehicleId.get(`${customerId}__id:${vehicleId}`)
+          : null;
+
+        const latestPaymentByRegParking =
+          customerId && regParkingKey
+            ? latestByRegParking.get(`${customerId}__${regParkingKey}`)
+            : null;
+
         const duePayment = paymentByVehicleId || paymentByRegParking || null;
+        const latestPayment =
+          latestPaymentByVehicleId || latestPaymentByRegParking || null;
         const dueAmount = duePayment
           ? Math.max(
               0,
@@ -835,7 +869,9 @@ service.monthlyStatement = async (userInfo, query) => {
                 toNumberSafe(duePayment.amount_paid),
             )
           : 0;
-        const dueDate = resolveDueDateLabel(duePayment);
+        const dueDate = resolveDueDateLabel(duePayment || latestPayment);
+        const dueDateDisplay =
+          dueDate !== "-" && dueAmount <= 0 ? `${dueDate} (Paid)` : dueDate;
 
         // Calculate schedule marks for each day in the month
         const dailyMarks = new Array(daysInMonth).fill(0);
@@ -912,6 +948,7 @@ service.monthlyStatement = async (userInfo, query) => {
           duDate: vehicleEnd ? moment(vehicleEnd).format("DD-MMM") : "-",
           dueAmount,
           dueDate,
+          dueDateDisplay,
           workerName: "",
           locationName: "",
           buildingId: buildingId ? String(buildingId) : "",
@@ -955,8 +992,11 @@ service.monthlyStatement = async (userInfo, query) => {
         buildingCountsMap.set(key, current);
       });
 
-      const buildingCounts = Array.from(buildingCountsMap.values()).sort((a, b) =>
-        String(a.buildingName || "").localeCompare(String(b.buildingName || "")),
+      const buildingCounts = Array.from(buildingCountsMap.values()).sort(
+        (a, b) =>
+          String(a.buildingName || "").localeCompare(
+            String(b.buildingName || ""),
+          ),
       );
 
       return {
@@ -1352,7 +1392,8 @@ service.monthlyStatement = async (userInfo, query) => {
         0,
         Number(item.dueAmount || item.duePayment || item.balanceDue || 0),
       );
-      const rowDueDate = item.dueDate || item.duDate || "-";
+      const rowDueDate =
+        item.dueDateDisplay || item.dueDate || item.duDate || "-";
 
       rowData = [
         rowNumber,
@@ -1679,10 +1720,12 @@ service.monthlyStatement = async (userInfo, query) => {
     for (let i = 8; i <= 7 + daysInMonth; i++) {
       reportSheet.getColumn(i).width = 3.5;
     }
-    reportSheet.getColumn(8 + daysInMonth).width =
-      isResidenceWorkerSelected ? 14 : 10;
-    reportSheet.getColumn(9 + daysInMonth).width =
-      isResidenceWorkerSelected ? 14 : 10;
+    reportSheet.getColumn(8 + daysInMonth).width = isResidenceWorkerSelected
+      ? 14
+      : 10;
+    reportSheet.getColumn(9 + daysInMonth).width = isResidenceWorkerSelected
+      ? 14
+      : 10;
     if (!isResidenceWorkerSelected) {
       reportSheet.getColumn(10 + daysInMonth).width = 10; // DU Date
     }
@@ -1704,7 +1747,8 @@ service.monthlyStatement = async (userInfo, query) => {
   if (shouldIncludeBuildingWiseSheets) {
     const groupedByBuilding = new Map();
     (Array.isArray(dataSource) ? dataSource : []).forEach((car) => {
-      const key = String(car?.buildingName || "Unknown Building").trim() ||
+      const key =
+        String(car?.buildingName || "Unknown Building").trim() ||
         "Unknown Building";
       if (!groupedByBuilding.has(key)) {
         groupedByBuilding.set(key, []);
@@ -1757,7 +1801,10 @@ service.monthlyStatement = async (userInfo, query) => {
 
         if (colNumber > 5 && colNumber <= 5 + daysInMonth) {
           const dayIndex = colNumber - 6;
-          const date = moment(findQuery.assignedDate.$gte).add(dayIndex, "days");
+          const date = moment(findQuery.assignedDate.$gte).add(
+            dayIndex,
+            "days",
+          );
           if (date.day() === 0) {
             cell.fill = {
               type: "pattern",
@@ -1777,7 +1824,10 @@ service.monthlyStatement = async (userInfo, query) => {
         const marks = Array.isArray(car?.dailyMarks)
           ? car.dailyMarks
           : new Array(daysInMonth).fill(0);
-        const rowScheduledTotal = marks.reduce((sum, mark) => sum + (mark || 0), 0);
+        const rowScheduledTotal = marks.reduce(
+          (sum, mark) => sum + (mark || 0),
+          0,
+        );
         const rowDueAmount = Math.max(0, toNumberSafe(car?.dueAmount));
 
         marks.forEach((mark, markIndex) => {
@@ -1795,7 +1845,7 @@ service.monthlyStatement = async (userInfo, query) => {
           ...marks.map((mark) => (mark > 0 ? mark : "")),
           rowScheduledTotal,
           rowDueAmount,
-          car?.dueDate || "-",
+          car?.dueDateDisplay || car?.dueDate || "-",
         ]);
 
         row.eachCell((cell, colNumber) => {
@@ -1810,7 +1860,10 @@ service.monthlyStatement = async (userInfo, query) => {
 
           if (colNumber > 5 && colNumber <= 5 + daysInMonth) {
             const dayIndex = colNumber - 6;
-            const date = moment(findQuery.assignedDate.$gte).add(dayIndex, "days");
+            const date = moment(findQuery.assignedDate.$gte).add(
+              dayIndex,
+              "days",
+            );
             if (date.day() === 0) {
               cell.fill = {
                 type: "pattern",
@@ -1851,7 +1904,10 @@ service.monthlyStatement = async (userInfo, query) => {
 
         if (colNumber > 5 && colNumber <= 5 + daysInMonth) {
           const dayIndex = colNumber - 6;
-          const date = moment(findQuery.assignedDate.$gte).add(dayIndex, "days");
+          const date = moment(findQuery.assignedDate.$gte).add(
+            dayIndex,
+            "days",
+          );
           if (date.day() === 0) {
             cell.fill = {
               type: "pattern",

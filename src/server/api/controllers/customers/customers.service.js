@@ -1316,6 +1316,136 @@ function isValidObjectId(id) {
   return false;
 }
 
+const toMoneySafe = (value) => {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const isValidMonthKey = (value) => {
+  const normalized = String(value || "").trim();
+  if (!/^\d{4}-\d{2}$/.test(normalized)) {
+    return false;
+  }
+
+  return moment(normalized, "YYYY-MM", true).isValid();
+};
+
+const resolveBillingMonthKey = (payment) => {
+  const billingMonth = String(payment?.billing_month || "").trim();
+  if (isValidMonthKey(billingMonth)) {
+    return billingMonth;
+  }
+
+  const createdAtMoment = moment(payment?.createdAt);
+  if (!createdAtMoment.isValid()) {
+    return "";
+  }
+
+  return createdAtMoment.subtract(1, "day").format("YYYY-MM");
+};
+
+const resolveSOADueDate = (payment) => {
+  const resolvedBillingMonth = resolveBillingMonthKey(payment);
+  if (!isValidMonthKey(resolvedBillingMonth)) {
+    return "-";
+  }
+
+  return moment(resolvedBillingMonth, "YYYY-MM")
+    .endOf("month")
+    .format("DD-MMM-YYYY");
+};
+
+const resolveSOAPaymentDate = (payment) => {
+  const candidates = [
+    payment?.collectedDate,
+    payment?.payment_date,
+    payment?.settledDate,
+  ];
+
+  for (const candidate of candidates) {
+    const dateMoment = moment(candidate);
+    if (dateMoment.isValid()) {
+      return dateMoment.format("DD-MMM-YYYY");
+    }
+  }
+
+  return "-";
+};
+
+const isCompletedSOAPayment = (payment) => {
+  const status = String(payment?.status || "")
+    .trim()
+    .toLowerCase();
+  const settled = String(payment?.settled || "")
+    .trim()
+    .toLowerCase();
+  return status === "completed" || settled === "completed";
+};
+
+const resolveSOAReceiptNo = (payment) => {
+  if (!isCompletedSOAPayment(payment)) {
+    return "";
+  }
+
+  const receiptNo = String(payment?.receipt_no || "").trim();
+  if (receiptNo) {
+    return receiptNo;
+  }
+
+  if (payment?.id !== undefined && payment?.id !== null) {
+    return `RCP${String(payment.id).padStart(6, "0")}`;
+  }
+
+  return "";
+};
+
+const normalizeVehicleIdFromPayment = (vehicle) => {
+  if (!vehicle) return "";
+  if (typeof vehicle === "string") return String(vehicle).trim();
+  if (typeof vehicle === "object") {
+    return String(vehicle?._id || vehicle?.id || "").trim();
+  }
+  return "";
+};
+
+const normalizeScheduleDays = (scheduleDays) => {
+  if (!scheduleDays) return "-";
+
+  if (typeof scheduleDays === "string") {
+    return scheduleDays
+      .split(",")
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  if (Array.isArray(scheduleDays)) {
+    return scheduleDays
+      .map((entry) => {
+        if (typeof entry === "object") {
+          return String(entry?.day || "").trim();
+        }
+        return String(entry || "").trim();
+      })
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return "-";
+};
+
+const resolveAgingBucketKey = (daysPastDue) => {
+  if (daysPastDue <= 30) return "bucket_0_30";
+  if (daysPastDue <= 60) return "bucket_31_60";
+  if (daysPastDue <= 90) return "bucket_61_90";
+  return "bucket_90_plus";
+};
+
+const resolveMonthKeyFromDate = (value) => {
+  const dateMoment = moment(value);
+  return dateMoment.isValid() ? dateMoment.format("YYYY-MM") : "";
+};
+
 // ... (Rest of Washes List Unchanged)
 service.washesList = async (userInfo, query, customerId) => {
   const paginationData = CommonHelper.paginationData(query);
@@ -1465,6 +1595,657 @@ service.exportWashesList = async (userInfo, query, customerId) => {
     });
   }
   return exportMap;
+};
+
+service.getSOA = async (userInfo, query, customerId) => {
+  if (!isValidObjectId(customerId)) {
+    throw "INVALID-CUSTOMER-ID";
+  }
+
+  const customer = await CustomersModel.findOne({
+    _id: customerId,
+    isDeleted: false,
+  })
+    .populate({ path: "building", select: "name" })
+    .lean();
+
+  if (!customer) {
+    throw "CUSTOMER-NOT-FOUND";
+  }
+
+  const selectedVehicleId = String(query?.vehicleId || "").trim();
+  const fromMonth = isValidMonthKey(query?.fromMonth) ? query.fromMonth : "";
+  const toMonth = isValidMonthKey(query?.toMonth) ? query.toMonth : "";
+
+  const customerVehicles = (customer?.vehicles || []).map((vehicle) => ({
+    vehicleId: String(vehicle?._id || ""),
+    registrationNo: vehicle?.registration_no || "-",
+    parkingNo: vehicle?.parking_no || "-",
+    amount: toMoneySafe(vehicle?.amount),
+    advanceAmount: toMoneySafe(vehicle?.advance_amount),
+    scheduleType: String(vehicle?.schedule_type || "-").toUpperCase(),
+    scheduleDays: normalizeScheduleDays(vehicle?.schedule_days),
+    status: Number(vehicle?.status) === 2 ? "INACTIVE" : "ACTIVE",
+  }));
+
+  const customerVehicleMap = new Map(
+    customerVehicles.map((vehicle) => [String(vehicle.vehicleId), vehicle]),
+  );
+
+  const [payments, oneWashPayments, customerJobs] = await Promise.all([
+    PaymentsModel.find({
+      isDeleted: false,
+      onewash: false,
+      customer: customerId,
+    })
+      .sort({ createdAt: 1, _id: 1 })
+      .lean(),
+    PaymentsModel.find({
+      isDeleted: false,
+      onewash: true,
+      customer: customerId,
+    })
+      .sort({ createdAt: -1, _id: -1 })
+      .lean(),
+    JobsModel.find({
+      isDeleted: false,
+      customer: customerId,
+    })
+      .select(
+        "scheduleId assignedDate completedDate vehicle registration_no parking_no status immediate price tips wash_type rejectionReason createdSource createdBy worker createdAt",
+      )
+      .populate({ path: "worker", select: "name" })
+      .sort({ assignedDate: -1, createdAt: -1, _id: -1 })
+      .limit(2000)
+      .lean(),
+  ]);
+
+  const jobsById = new Map(
+    customerJobs.map((job) => [String(job?._id || ""), job]),
+  );
+
+  const allTransactions = payments.map((payment, index) => {
+    const vehicleId = normalizeVehicleIdFromPayment(payment?.vehicle);
+    const paymentVehicle =
+      payment?.vehicle && typeof payment.vehicle === "object"
+        ? payment.vehicle
+        : null;
+    const vehicleMeta = customerVehicleMap.get(String(vehicleId));
+
+    const billingMonth = resolveBillingMonthKey(payment);
+    const monthLabel = billingMonth
+      ? moment(billingMonth, "YYYY-MM").format("MMM YYYY").toUpperCase()
+      : "-";
+
+    const openingBalance = toMoneySafe(payment?.old_balance);
+    const subscriptionAmount = toMoneySafe(payment?.amount_charged);
+    const billedAmount =
+      payment?.total_amount !== undefined
+        ? toMoneySafe(payment.total_amount)
+        : openingBalance + subscriptionAmount;
+    const paidAmount = toMoneySafe(payment?.amount_paid);
+    const dueAmount =
+      payment?.balance !== undefined
+        ? toMoneySafe(payment.balance)
+        : Math.max(0, billedAmount - paidAmount);
+
+    const dueDate = resolveSOADueDate(payment);
+    const dueDateDisplay =
+      dueDate !== "-" && dueAmount <= 0 ? `${dueDate} (Paid)` : dueDate;
+
+    const paymentDate = resolveSOAPaymentDate(payment);
+
+    return {
+      id: payment?._id,
+      serialNo: index + 1,
+      billingMonth,
+      monthLabel,
+      vehicleId: vehicleId || "",
+      registrationNo:
+        vehicleMeta?.registrationNo ||
+        paymentVehicle?.registration_no ||
+        payment?.registration_no ||
+        "",
+      parkingNo:
+        vehicleMeta?.parkingNo ||
+        paymentVehicle?.parking_no ||
+        payment?.parking_no ||
+        "",
+      openingBalance,
+      subscriptionAmount,
+      billedAmount,
+      paidAmount,
+      dueAmount,
+      dueDate,
+      dueDateDisplay,
+      paymentDate,
+      paymentMode: String(payment?.payment_mode || "").trim(),
+      status: String(payment?.status || "pending").toUpperCase(),
+      settled: String(payment?.settled || "pending").toUpperCase(),
+      receiptNo: resolveSOAReceiptNo(payment),
+      notes: String(payment?.notes || "").trim(),
+      createdAt: payment?.createdAt,
+    };
+  });
+
+  const allOneWashTransactions = oneWashPayments.map((payment, index) => {
+    const matchedJob = jobsById.get(String(payment?.job || ""));
+
+    const vehicleIdFromPayment = normalizeVehicleIdFromPayment(payment?.vehicle);
+    const vehicleId = vehicleIdFromPayment || String(matchedJob?.vehicle || "");
+
+    const paymentVehicle =
+      payment?.vehicle && typeof payment.vehicle === "object"
+        ? payment.vehicle
+        : null;
+    const vehicleMeta = customerVehicleMap.get(String(vehicleId));
+
+    const billingMonth = resolveMonthKeyFromDate(
+      payment?.createdAt || payment?.collectedDate || payment?.settledDate,
+    );
+    const monthLabel = billingMonth
+      ? moment(billingMonth, "YYYY-MM").format("MMM YYYY").toUpperCase()
+      : "-";
+
+    const baseAmount =
+      payment?.amount_charged !== undefined
+        ? toMoneySafe(payment.amount_charged)
+        : Math.max(
+            0,
+            toMoneySafe(payment?.total_amount) - toMoneySafe(payment?.tip_amount),
+          );
+    const tipAmount = toMoneySafe(payment?.tip_amount);
+    const billedAmount =
+      payment?.total_amount !== undefined
+        ? toMoneySafe(payment.total_amount)
+        : baseAmount + tipAmount;
+    const paidAmount = toMoneySafe(payment?.amount_paid);
+    const dueAmount =
+      payment?.balance !== undefined
+        ? toMoneySafe(payment.balance)
+        : Math.max(0, billedAmount - paidAmount);
+
+    const paymentDate = resolveSOAPaymentDate(payment);
+    const transactionDate =
+      paymentDate !== "-"
+        ? paymentDate
+        : (() => {
+            const fallbackMoment = moment(payment?.createdAt);
+            return fallbackMoment.isValid()
+              ? fallbackMoment.format("DD-MMM-YYYY")
+              : "-";
+          })();
+
+    const washType = String(matchedJob?.wash_type || "ONEWASH")
+      .trim()
+      .toUpperCase();
+
+    return {
+      id: payment?._id,
+      serialNo: index + 1,
+      billingMonth,
+      monthLabel,
+      vehicleId: String(vehicleId || "").trim(),
+      registrationNo:
+        vehicleMeta?.registrationNo ||
+        matchedJob?.registration_no ||
+        paymentVehicle?.registration_no ||
+        payment?.registration_no ||
+        "",
+      parkingNo:
+        vehicleMeta?.parkingNo ||
+        matchedJob?.parking_no ||
+        paymentVehicle?.parking_no ||
+        payment?.parking_no ||
+        "",
+      baseAmount,
+      tipAmount,
+      billedAmount,
+      paidAmount,
+      dueAmount,
+      paymentDate,
+      transactionDate,
+      paymentMode: String(payment?.payment_mode || "").trim(),
+      washType,
+      status: String(payment?.status || "pending").toUpperCase(),
+      settled: String(payment?.settled || "pending").toUpperCase(),
+      receiptNo: resolveSOAReceiptNo(payment),
+      notes: String(payment?.notes || "").trim(),
+      createdAt: payment?.createdAt,
+    };
+  });
+
+  const allWashActivities = customerJobs.map((job, index) => {
+    const vehicleId = String(job?.vehicle || "").trim();
+    const vehicleMeta = customerVehicleMap.get(vehicleId);
+
+    const jobDateSource = job?.assignedDate || job?.createdAt;
+    const jobDateMoment = moment(jobDateSource);
+    const billingMonth = resolveMonthKeyFromDate(jobDateSource);
+    const monthLabel = billingMonth
+      ? moment(billingMonth, "YYYY-MM").format("MMM YYYY").toUpperCase()
+      : "-";
+
+    const activityType = job?.immediate ? "ONEWASH" : "SCHEDULED";
+    const amount = toMoneySafe(job?.price);
+    const tipAmount = toMoneySafe(job?.tips);
+
+    return {
+      id: job?._id,
+      serialNo: index + 1,
+      date: jobDateMoment.isValid() ? jobDateMoment.format("DD-MMM-YYYY") : "-",
+      billingMonth,
+      monthLabel,
+      vehicleId,
+      registrationNo:
+        vehicleMeta?.registrationNo || job?.registration_no || "",
+      parkingNo: vehicleMeta?.parkingNo || job?.parking_no || "",
+      scheduleId: job?.scheduleId || "",
+      status: String(job?.status || "pending").toUpperCase(),
+      activityType,
+      washType: String(job?.wash_type || "").trim().toUpperCase(),
+      amount,
+      tipAmount,
+      workerName: String(job?.worker?.name || "").trim(),
+      createdSource: String(job?.createdSource || job?.createdBy || "").trim(),
+      notes: String(job?.rejectionReason || "").trim(),
+      createdAt: job?.createdAt,
+      assignedDate: job?.assignedDate,
+      completedDate: job?.completedDate,
+    };
+  });
+
+  const isEntryWithinFilters = (entry) => {
+    if (selectedVehicleId && String(entry.vehicleId || "") !== selectedVehicleId) {
+      return false;
+    }
+
+    if ((fromMonth || toMonth) && !entry.billingMonth) {
+      return false;
+    }
+
+    if (fromMonth && entry.billingMonth < fromMonth) {
+      return false;
+    }
+
+    if (toMonth && entry.billingMonth > toMonth) {
+      return false;
+    }
+
+    return true;
+  };
+
+  const availableMonths = Array.from(
+    new Set(
+      [
+        ...allTransactions.map((entry) => entry.billingMonth),
+        ...allOneWashTransactions.map((entry) => entry.billingMonth),
+        ...allWashActivities.map((entry) => entry.billingMonth),
+      ].filter(Boolean),
+    ),
+  )
+    .sort((a, b) => a.localeCompare(b))
+    .map((monthKey) => ({
+      value: monthKey,
+      label: moment(monthKey, "YYYY-MM").format("MMM YYYY").toUpperCase(),
+    }));
+
+  const filteredTransactions = allTransactions.filter(isEntryWithinFilters);
+  const filteredOneWashTransactions = allOneWashTransactions.filter(
+    isEntryWithinFilters,
+  );
+  const filteredWashActivities = allWashActivities.filter(isEntryWithinFilters);
+
+  const monthlyMap = new Map();
+
+  filteredTransactions.forEach((entry) => {
+    const key = entry.billingMonth || "N/A";
+
+    if (!monthlyMap.has(key)) {
+      monthlyMap.set(key, {
+        month: entry.billingMonth || "-",
+        monthLabel: entry.monthLabel || "-",
+        openingBalance: 0,
+        subscriptionAmount: 0,
+        billedAmount: 0,
+        paidAmount: 0,
+        dueAmount: 0,
+        paymentCount: 0,
+        dueDate: "-",
+        dueDateDisplay: "-",
+      });
+    }
+
+    const aggregate = monthlyMap.get(key);
+    aggregate.openingBalance += entry.openingBalance;
+    aggregate.subscriptionAmount += entry.subscriptionAmount;
+    aggregate.billedAmount += entry.billedAmount;
+    aggregate.paidAmount += entry.paidAmount;
+    aggregate.dueAmount += entry.dueAmount;
+    aggregate.paymentCount += 1;
+
+    if (entry.dueDate && entry.dueDate !== "-") {
+      aggregate.dueDate = entry.dueDate;
+      aggregate.dueDateDisplay = entry.dueDateDisplay;
+    }
+  });
+
+  const monthly = Array.from(monthlyMap.values())
+    .sort((a, b) => String(a.month || "").localeCompare(String(b.month || "")))
+    .map((entry) => {
+      const collectionPercent =
+        entry.billedAmount > 0
+          ? Number(((entry.paidAmount / entry.billedAmount) * 100).toFixed(1))
+          : 0;
+
+      const dueDateDisplay =
+        entry.dueDate !== "-" && entry.dueAmount <= 0
+          ? `${entry.dueDate} (Paid)`
+          : entry.dueDateDisplay || entry.dueDate || "-";
+
+      return {
+        ...entry,
+        collectionPercent,
+        status: entry.dueAmount <= 0 ? "PAID" : "PENDING",
+        dueDateDisplay,
+      };
+    });
+
+  const agingBuckets = {
+    bucket_0_30: {
+      label: "0-30 Days",
+      amount: 0,
+      months: 0,
+    },
+    bucket_31_60: {
+      label: "31-60 Days",
+      amount: 0,
+      months: 0,
+    },
+    bucket_61_90: {
+      label: "61-90 Days",
+      amount: 0,
+      months: 0,
+    },
+    bucket_90_plus: {
+      label: "90+ Days",
+      amount: 0,
+      months: 0,
+    },
+  };
+
+  const today = moment().startOf("day");
+
+  monthly.forEach((entry) => {
+    if (toMoneySafe(entry?.dueAmount) <= 0) {
+      return;
+    }
+
+    const dueMoment = moment(entry?.dueDate, "DD-MMM-YYYY", true);
+    if (!dueMoment.isValid()) {
+      return;
+    }
+
+    const daysPastDue = Math.max(
+      0,
+      today.diff(dueMoment.startOf("day"), "days"),
+    );
+    const bucketKey = resolveAgingBucketKey(daysPastDue);
+    const bucket = agingBuckets[bucketKey];
+
+    bucket.amount += toMoneySafe(entry.dueAmount);
+    bucket.months += 1;
+  });
+
+  const totalAgingDue = Object.values(agingBuckets).reduce(
+    (acc, bucket) => acc + toMoneySafe(bucket.amount),
+    0,
+  );
+
+  const summary = filteredTransactions.reduce(
+    (acc, entry) => {
+      acc.totalOpeningBalance += entry.openingBalance;
+      acc.totalSubscription += entry.subscriptionAmount;
+      acc.totalBilled += entry.billedAmount;
+      acc.totalPaid += entry.paidAmount;
+      acc.totalDue += entry.dueAmount;
+      return acc;
+    },
+    {
+      totalOpeningBalance: 0,
+      totalSubscription: 0,
+      totalBilled: 0,
+      totalPaid: 0,
+      totalDue: 0,
+    },
+  );
+
+  const oneWashSummary = filteredOneWashTransactions.reduce(
+    (acc, entry) => {
+      acc.totalBaseAmount += entry.baseAmount;
+      acc.totalTips += entry.tipAmount;
+      acc.totalBilled += entry.billedAmount;
+      acc.totalPaid += entry.paidAmount;
+      acc.totalDue += entry.dueAmount;
+      return acc;
+    },
+    {
+      totalBaseAmount: 0,
+      totalTips: 0,
+      totalBilled: 0,
+      totalPaid: 0,
+      totalDue: 0,
+    },
+  );
+
+  const paidTransactions = filteredTransactions
+    .filter((entry) => entry.paidAmount > 0)
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime(),
+    );
+
+  const finalTransactions = filteredTransactions
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime(),
+    )
+    .map((entry, index) => ({ ...entry, serialNo: index + 1 }));
+
+  const finalOneWashTransactions = filteredOneWashTransactions
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime(),
+    )
+    .map((entry, index) => ({ ...entry, serialNo: index + 1 }));
+
+  const finalWashActivities = filteredWashActivities
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.assignedDate || b.createdAt || 0).getTime() -
+        new Date(a.assignedDate || a.createdAt || 0).getTime(),
+    )
+    .map((entry, index) => ({ ...entry, serialNo: index + 1 }));
+
+  const washActivitySummary = finalWashActivities.reduce(
+    (acc, entry) => {
+      const normalizedStatus = String(entry?.status || "").toUpperCase();
+
+      acc.totalWashes += 1;
+      acc.totalAmount += toMoneySafe(entry?.amount);
+      acc.totalTips += toMoneySafe(entry?.tipAmount);
+
+      if (["COMPLETED", "DONE", "COLLECTED"].includes(normalizedStatus)) {
+        acc.completed += 1;
+      } else if (normalizedStatus === "REJECTED") {
+        acc.rejected += 1;
+      } else if (["CANCELLED", "CANCELED"].includes(normalizedStatus)) {
+        acc.cancelled += 1;
+      } else {
+        acc.pending += 1;
+      }
+
+      return acc;
+    },
+    {
+      totalWashes: 0,
+      completed: 0,
+      pending: 0,
+      rejected: 0,
+      cancelled: 0,
+      totalAmount: 0,
+      totalTips: 0,
+      latestActivityDate: finalWashActivities[0]?.date || "-",
+    },
+  );
+
+  const oneWashCollectionPercent =
+    oneWashSummary.totalBilled > 0
+      ? Number(
+          ((oneWashSummary.totalPaid / oneWashSummary.totalBilled) * 100).toFixed(
+            1,
+          ),
+        )
+      : 0;
+
+  const overallBilled = summary.totalBilled + oneWashSummary.totalBilled;
+  const overallPaid = summary.totalPaid + oneWashSummary.totalPaid;
+  const overallDue = summary.totalDue + oneWashSummary.totalDue;
+  const overallCollectionPercent =
+    overallBilled > 0
+      ? Number(((overallPaid / overallBilled) * 100).toFixed(1))
+      : 0;
+
+  const combinedPaidTransactions = [
+    ...finalTransactions.filter((entry) => toMoneySafe(entry?.paidAmount) > 0),
+    ...finalOneWashTransactions.filter(
+      (entry) => toMoneySafe(entry?.paidAmount) > 0,
+    ),
+  ].sort(
+    (a, b) =>
+      new Date(b.createdAt || 0).getTime() -
+      new Date(a.createdAt || 0).getTime(),
+  );
+
+  const selectedVehicle = selectedVehicleId
+    ? customerVehicleMap.get(selectedVehicleId) ||
+      (() => {
+        const matched =
+          finalTransactions.find(
+            (entry) => String(entry.vehicleId) === selectedVehicleId,
+          ) ||
+          finalOneWashTransactions.find(
+            (entry) => String(entry.vehicleId) === selectedVehicleId,
+          ) ||
+          finalWashActivities.find(
+            (entry) => String(entry.vehicleId) === selectedVehicleId,
+          );
+
+        if (!matched) return null;
+
+        return {
+          vehicleId: selectedVehicleId,
+          registrationNo: matched.registrationNo,
+          parkingNo: matched.parkingNo,
+          amount: 0,
+          advanceAmount: 0,
+          scheduleType: "",
+          scheduleDays: "",
+          status: "",
+        };
+      })()
+    : null;
+
+  const collectionPercent =
+    summary.totalBilled > 0
+      ? Number(((summary.totalPaid / summary.totalBilled) * 100).toFixed(1))
+      : 0;
+
+  const highestDueMonth =
+    monthly.slice().sort((a, b) => b.dueAmount - a.dueAmount)[0] || null;
+
+  return {
+    customer: {
+      id: customer._id,
+      customerCode: customer.customerCode || "",
+      fullName:
+        `${customer.firstName || ""} ${customer.lastName || ""}`.trim() ||
+        String(customer.name || "").trim(),
+      mobile: customer.mobile || "",
+      buildingName:
+        (typeof customer.building === "object" && customer.building?.name) ||
+        customer.buildingName ||
+        "",
+      flatNo: customer.flat_no || "",
+      status: Number(customer.status) === 2 ? "INACTIVE" : "ACTIVE",
+    },
+    filters: {
+      vehicleId: selectedVehicleId,
+      fromMonth,
+      toMonth,
+    },
+    selectedVehicle,
+    vehicles: customerVehicles,
+    availableMonths,
+    summary: {
+      ...summary,
+      paymentsCount: finalTransactions.length,
+      monthsCovered: monthly.length,
+      collectionPercent,
+      averageMonthlyBill:
+        monthly.length > 0 ? summary.totalBilled / monthly.length : 0,
+      averageMonthlyPaid:
+        monthly.length > 0 ? summary.totalPaid / monthly.length : 0,
+      lastPaymentDate: combinedPaidTransactions[0]?.paymentDate || "-",
+      agingBuckets,
+      agingDueTotal: totalAgingDue,
+      oneWashCount: finalOneWashTransactions.length,
+      oneWashBaseAmount: oneWashSummary.totalBaseAmount,
+      oneWashTips: oneWashSummary.totalTips,
+      oneWashBilled: oneWashSummary.totalBilled,
+      oneWashPaid: oneWashSummary.totalPaid,
+      oneWashDue: oneWashSummary.totalDue,
+      oneWashCollectionPercent,
+      overallBilled,
+      overallPaid,
+      overallDue,
+      overallCollectionPercent,
+      washCount: finalWashActivities.length,
+      washAmountTotal: washActivitySummary.totalAmount,
+      washTipsTotal: washActivitySummary.totalTips,
+      washCompletedCount: washActivitySummary.completed,
+      washPendingCount: washActivitySummary.pending,
+      washRejectedCount: washActivitySummary.rejected,
+      washCancelledCount: washActivitySummary.cancelled,
+    },
+    insights: {
+      monthsWithDue: monthly.filter((entry) => entry.dueAmount > 0).length,
+      fullyPaidMonths: monthly.filter((entry) => entry.dueAmount <= 0).length,
+      highestDueMonth,
+      latestWashActivity: finalWashActivities[0] || null,
+    },
+    monthly,
+    transactions: finalTransactions,
+    oneWash: {
+      summary: {
+        ...oneWashSummary,
+        count: finalOneWashTransactions.length,
+        collectionPercent: oneWashCollectionPercent,
+      },
+      transactions: finalOneWashTransactions,
+    },
+    washActivity: {
+      summary: washActivitySummary,
+      entries: finalWashActivities,
+    },
+  };
 };
 
 // ---------------------------------------------------------

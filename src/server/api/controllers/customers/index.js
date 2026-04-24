@@ -98,6 +98,12 @@ router.get(
 // History & Wash Reports
 router.get("/:id/history", AuthHelper.authenticate, controller.washesList);
 router.get(
+  "/:id/soa",
+  AuthHelper.authenticate,
+  hasAccess("customers", "view"),
+  controller.getSOA,
+);
+router.get(
   "/:id/history/export/list",
   AuthHelper.authenticate,
   controller.exportWashesList,

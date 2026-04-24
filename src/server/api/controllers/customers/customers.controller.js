@@ -362,6 +362,35 @@ controller.washesList = async (req, res) => {
   }
 };
 
+controller.getSOA = async (req, res) => {
+  try {
+    const { user, query, params } = req;
+    const data = await service.getSOA(user, query, params.id);
+    return res.status(200).json({ statusCode: 200, message: "success", data });
+  } catch (error) {
+    if (error === "INVALID-CUSTOMER-ID") {
+      return res.status(400).json({
+        statusCode: 400,
+        message: "Invalid customer id",
+      });
+    }
+
+    if (error === "CUSTOMER-NOT-FOUND") {
+      return res.status(404).json({
+        statusCode: 404,
+        message: "Customer not found",
+      });
+    }
+
+    return res
+      .status(500)
+      .json({
+        message: "Internal server error",
+        error: error.message || error,
+      });
+  }
+};
+
 controller.exportWashesList = async (req, res) => {
   try {
     const { user, query, params } = req;
