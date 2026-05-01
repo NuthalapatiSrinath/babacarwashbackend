@@ -1625,6 +1625,10 @@ service.getSOA = async (userInfo, query, customerId) => {
     advanceAmount: toMoneySafe(vehicle?.advance_amount),
     scheduleType: String(vehicle?.schedule_type || "-").toUpperCase(),
     scheduleDays: normalizeScheduleDays(vehicle?.schedule_days),
+    scheduleDaysRaw: vehicle?.schedule_days || [],
+    startDate: vehicle?.start_date || null,
+    onboardDate: vehicle?.onboard_date || null,
+    deactivateDate: vehicle?.deactivateDate || null,
     status: Number(vehicle?.status) === 2 ? "INACTIVE" : "ACTIVE",
   }));
 
