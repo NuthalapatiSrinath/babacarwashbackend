@@ -17,6 +17,40 @@ const toNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const DEFAULT_TIP_BASES = {
+  cashOutside: 21,
+  cashTotal: 31,
+  cardOutside: 21.5,
+  cardTotal: 31.5,
+};
+
+const resolveTipBaseValue = (value, fallback) => {
+  const num = toNumber(value);
+  return num != null ? num : fallback;
+};
+
+const resolveMallTipBaseAmounts = (pricing) => {
+  const paymentControl = pricing?.payment_control || {};
+  return {
+    cashOutside: resolveTipBaseValue(
+      paymentControl.cash_outside_base,
+      DEFAULT_TIP_BASES.cashOutside,
+    ),
+    cashTotal: resolveTipBaseValue(
+      paymentControl.cash_total_base,
+      DEFAULT_TIP_BASES.cashTotal,
+    ),
+    cardOutside: resolveTipBaseValue(
+      paymentControl.card_outside_base,
+      DEFAULT_TIP_BASES.cardOutside,
+    ),
+    cardTotal: resolveTipBaseValue(
+      paymentControl.card_total_base,
+      DEFAULT_TIP_BASES.cardTotal,
+    ),
+  };
+};
+
 const resolveMallPricingDoc = async (mallId) => {
   if (!mallId) return null;
   let pricing = await PricingModel.findOne({
@@ -405,17 +439,30 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
           : true;
 
     const pricingAmount = resolveMallFixedAmount(pricing, jobData.wash_type);
+    const tipBases = resolveMallTipBaseAmounts(pricing);
+    const normalizedWashType = String(jobData.wash_type || "")
+      .toLowerCase()
+      .trim();
+    const isWashTotal = normalizedWashType === "total";
+    const isWashOutside = normalizedWashType === "outside";
+    const isWashInside = normalizedWashType === "inside";
+    const isCashMode = payload.payment_mode === "cash";
+    const isCardMode =
+      payload.payment_mode === "card" ||
+      payload.payment_mode === "bank transfer";
+    const forceFixedBase =
+      (isCashMode || isCardMode) && (isWashTotal || isWashOutside);
 
-    if (isFixedForMode) {
-      if (pricingAmount != null) {
-        baseAmount = pricingAmount;
-      } else if (payload.payment_mode === "cash") {
+    if (isFixedForMode || forceFixedBase) {
+      if (isCashMode) {
         // Cash payment base amounts
-        if (jobData.wash_type === "total") {
-          baseAmount = 31; // Internal + External Wash
-        } else if (jobData.wash_type === "outside") {
-          baseAmount = 21; // External Wash only
-        } else if (jobData.wash_type === "inside") {
+        if (isWashTotal) {
+          baseAmount = tipBases.cashTotal; // Internal + External Wash
+        } else if (isWashOutside) {
+          baseAmount = tipBases.cashOutside; // External Wash only
+        } else if (pricingAmount != null) {
+          baseAmount = pricingAmount;
+        } else if (isWashInside) {
           baseAmount = 10; // Internal Wash only
         } else {
           // Fallback to mall's configured amount
@@ -423,13 +470,15 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
         }
       } else {
         // Card payment base amounts (includes card charges)
-        if (jobData.wash_type === "total") {
-          baseAmount = 31.5; // Internal + External Wash
-        } else if (jobData.wash_type === "outside") {
-          baseAmount = 21.5; // External Wash only
+        if (isWashTotal) {
+          baseAmount = tipBases.cardTotal; // Internal + External Wash
+        } else if (isWashOutside) {
+          baseAmount = tipBases.cardOutside; // External Wash only
+        } else if (pricingAmount != null) {
+          baseAmount = pricingAmount;
         } else {
           // Fallback to existing logic for other types (inside, or undefined)
-          baseAmount = mallData.amount + mallData.card_charges;
+          baseAmount = mallData.amount + (mallData.card_charges || 0);
         }
       }
     } else {

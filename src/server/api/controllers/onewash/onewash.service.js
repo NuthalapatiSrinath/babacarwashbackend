@@ -15,6 +15,47 @@ const service = module.exports;
 const isValidId = (id) =>
   id && typeof id === "string" && id.match(/^[0-9a-fA-F]{24}$/);
 
+const toNumber = (value) => {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const DEFAULT_TIP_BASES = {
+  cashOutside: 21,
+  cashTotal: 31,
+  cardOutside: 21.5,
+  cardTotal: 31.5,
+};
+
+const resolveTipBaseValue = (value, fallback) => {
+  const num = toNumber(value);
+  return num != null ? num : fallback;
+};
+
+const resolveMallTipBaseAmounts = (pricing) => {
+  const paymentControl = pricing?.payment_control || {};
+  return {
+    cashOutside: resolveTipBaseValue(
+      paymentControl.cash_outside_base,
+      DEFAULT_TIP_BASES.cashOutside,
+    ),
+    cashTotal: resolveTipBaseValue(
+      paymentControl.cash_total_base,
+      DEFAULT_TIP_BASES.cashTotal,
+    ),
+    cardOutside: resolveTipBaseValue(
+      paymentControl.card_outside_base,
+      DEFAULT_TIP_BASES.cardOutside,
+    ),
+    cardTotal: resolveTipBaseValue(
+      paymentControl.card_total_base,
+      DEFAULT_TIP_BASES.cardTotal,
+    ),
+  };
+};
+
 // --- LIST ---
 service.list = async (userInfo, query) => {
   const findQuery = { isDeleted: false };
@@ -466,6 +507,7 @@ service.create = async (userInfo, payload) => {
       (pricingData && pricingData.sedan && pricingData.sedan.wash_types);
     if (washTypesData) {
       let baseAmount;
+      const tipBases = resolveMallTipBaseAmounts(pricingData);
 
       if (
         payload.payment_mode === "card" ||
@@ -473,9 +515,9 @@ service.create = async (userInfo, payload) => {
       ) {
         // Card/Bank payment base amounts
         if (payload.wash_type === "total") {
-          baseAmount = 31.5; // Internal + External
+          baseAmount = tipBases.cardTotal; // Internal + External
         } else if (payload.wash_type === "outside") {
-          baseAmount = 21.5; // External only
+          baseAmount = tipBases.cardOutside; // External only
         } else {
           // For "inside" - no standard rate, use mall default
           const mallData = await MallsModel.findOne({ _id: payload.mall });
@@ -486,13 +528,13 @@ service.create = async (userInfo, payload) => {
       } else if (payload.payment_mode === "cash") {
         // Cash payment base amounts
         if (payload.wash_type === "total") {
-          baseAmount = 31; // Internal + External
+          baseAmount = tipBases.cashTotal; // Internal + External
         } else if (payload.wash_type === "outside") {
-          baseAmount = 21; // External only
+          baseAmount = tipBases.cashOutside; // External only
         } else if (payload.wash_type === "inside") {
           baseAmount = 10; // Internal only
         } else {
-          baseAmount = 21; // Default to external
+          baseAmount = tipBases.cashOutside; // Default to external
         }
       } else {
         baseAmount = 0; // Unknown payment mode
@@ -606,13 +648,14 @@ service.update = async (userInfo, id, payload) => {
       const paymentMode =
         updatePayload.payment_mode || onewashData.payment_mode;
       let baseAmount;
+      const tipBases = resolveMallTipBaseAmounts(pricingData);
 
       if (paymentMode === "card" || paymentMode === "bank transfer") {
         // Card/Bank payment base amounts
         if (washType === "total") {
-          baseAmount = 31.5; // Internal + External
+          baseAmount = tipBases.cardTotal; // Internal + External
         } else if (washType === "outside") {
-          baseAmount = 21.5; // External only
+          baseAmount = tipBases.cardOutside; // External only
         } else {
           // For "inside" - fetch mall default
           const mallData = await MallsModel.findOne({ _id: mallId });
@@ -623,13 +666,13 @@ service.update = async (userInfo, id, payload) => {
       } else if (paymentMode === "cash") {
         // Cash payment base amounts
         if (washType === "total") {
-          baseAmount = 31; // Internal + External
+          baseAmount = tipBases.cashTotal; // Internal + External
         } else if (washType === "outside") {
-          baseAmount = 21; // External only
+          baseAmount = tipBases.cashOutside; // External only
         } else if (washType === "inside") {
           baseAmount = 10; // Internal only
         } else {
-          baseAmount = 21; // Default
+          baseAmount = tipBases.cashOutside; // Default
         }
       } else {
         baseAmount = 0;
