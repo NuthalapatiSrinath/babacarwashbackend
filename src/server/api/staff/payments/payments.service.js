@@ -214,7 +214,7 @@ service.list = async (userInfo, query) => {
   if (mallIds.size) {
     const pricingDocs = await PricingModel.find(
       { mall: { $in: [...mallIds] }, isDeleted: false },
-      { mall: 1, wash_types: 1, sedan: 1, "4x4": 1 },
+      { mall: 1, wash_types: 1, sedan: 1, "4x4": 1, payment_control: 1 },
     ).lean();
     for (const pricing of pricingDocs) {
       pricingByMallId.set(String(pricing.mall), pricing);
@@ -225,6 +225,7 @@ service.list = async (userInfo, query) => {
     onewashPayments.map(async (payment) => {
       let display_service_type = null;
       let wash_type = null;
+      let balanceOverride = payment.balance;
 
       const jobId = String(payment.job || "");
       let job = onewashJobMap.get(jobId) || fallbackJobMap.get(jobId) || null;
@@ -257,6 +258,29 @@ service.list = async (userInfo, query) => {
           // Don't set wash_type for residence
         } else if (job.mall) {
           const pricing = pricingByMallId.get(String(job.mall));
+          const paymentControl = pricing?.payment_control || {};
+          const cashFixedConfig = paymentControl.cash_fixed;
+          const cardFixedConfig = paymentControl.card_fixed;
+          const hasControl =
+            typeof cashFixedConfig === "boolean" ||
+            typeof cardFixedConfig === "boolean";
+          const isCardFixed = hasControl ? cardFixedConfig === true : false;
+          const tipBases = resolveMallTipBaseAmounts(pricing);
+          const normalizedWashType = String(job.wash_type || "")
+            .toLowerCase()
+            .trim();
+          const isWashTotal = normalizedWashType === "total";
+          const isWashOutside = normalizedWashType === "outside";
+
+          if (!isCardFixed && (isWashTotal || isWashOutside)) {
+            const cardBaseAmount = isWashTotal
+              ? tipBases.cardTotal
+              : tipBases.cardOutside;
+            const currentBalance = toNumber(payment.balance) || 0;
+            if (cardBaseAmount > 0 && currentBalance <= 0) {
+              balanceOverride = cardBaseAmount;
+            }
+          }
           const hasWashTypes =
             (pricing && pricing.wash_types) ||
             (pricing && pricing.sedan && pricing.sedan.wash_types);
@@ -299,6 +323,7 @@ service.list = async (userInfo, query) => {
         ...payment,
         display_service_type,
         wash_type,
+        balance: balanceOverride,
       };
     }),
   );
@@ -417,8 +442,7 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
   }
   // Only calculate tips for MALL jobs
   else if (jobData.mall) {
-    mallData = await MallsModel.findOne({ _id: jobData.mall });
-    amount_paid = payload.amount;
+    const mallData = await MallsModel.findOne({ _id: jobData.mall });
 
     // Calculate base amount and tip for both cash and card
     let baseAmount;
@@ -452,6 +476,32 @@ service.collectOnewashPayment = async (userInfo, id, payload, paymentData) => {
       payload.payment_mode === "bank transfer";
     const forceFixedBase =
       (isCashMode || isCardMode) && (isWashTotal || isWashOutside);
+
+    const resolveDefaultBaseAmount = () => {
+      if (isCashMode) {
+        if (isWashTotal) return tipBases.cashTotal;
+        if (isWashOutside) return tipBases.cashOutside;
+        if (pricingAmount != null) return pricingAmount;
+        if (isWashInside) return 10;
+        return (mallData && mallData.amount) || 0;
+      }
+
+      if (isWashTotal) return tipBases.cardTotal;
+      if (isWashOutside) return tipBases.cardOutside;
+      if (pricingAmount != null) return pricingAmount;
+      return ((mallData && mallData.amount) || 0) +
+        ((mallData && mallData.card_charges) || 0);
+    };
+
+    const submittedAmount = toNumber(payload.amount);
+    if (submittedAmount == null || submittedAmount <= 0) {
+      const fallbackAmount = resolveDefaultBaseAmount();
+      if (fallbackAmount > 0) {
+        payload.amount = fallbackAmount;
+      }
+    }
+
+    amount_paid = payload.amount;
 
     if (isFixedForMode || forceFixedBase) {
       if (isCashMode) {
