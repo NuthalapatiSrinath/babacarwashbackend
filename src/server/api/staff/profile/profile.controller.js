@@ -11,3 +11,13 @@ controller.getProfile = async (req, res) => {
         return res.status(400).send({ statusCode: 400, message: error });
     }
 };
+
+controller.updateAttendanceSheetPreferences = async (req, res) => {
+    try {
+        const data = await service.updateAttendanceSheetPreferences(req.user, req.body || {});
+        return res.send({ statusCode: 200, message: 'success', data });
+    } catch (error) {
+        console.error('Error in updateAttendanceSheetPreferences:', error);
+        return res.status(400).send({ statusCode: 400, message: error });
+    }
+};

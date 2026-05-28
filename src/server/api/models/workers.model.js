@@ -64,6 +64,14 @@ const schema = new mongoose.Schema(
       filename: { type: String },
     },
 
+    attendanceSheetPreferences: {
+      downloadPreset: { type: String },
+      offsetX: { type: Number, default: 0 },
+      offsetY: { type: Number, default: 0 },
+      fontScale: { type: Number, default: 1 },
+      updatedAt: { type: Date },
+    },
+
     // ✅ Passport Details
     passportNumber: { type: String },
     passportExpiry: { type: Date },
